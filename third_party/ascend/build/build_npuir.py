@@ -117,7 +117,7 @@ def _build_and_package_bisheng(repo_dir, bisheng_compiler_path, build_type="Rele
     build_script = repo_dir / "build-tools" / "build.sh"
     if not build_script.exists():
         raise RuntimeError(f"Build script not found: {build_script}")
-    max_jobs = min(os.cpu_count() // 8, 32)
+    max_jobs = max(1, min((os.cpu_count() or 8) // 8, 32))
     build_path = repo_dir / "build"
     if build_path.exists():
         shutil.rmtree(str(build_path))
