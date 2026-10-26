@@ -100,6 +100,9 @@ jobs:
             # (Ascend 950) on linux-amd64-a5-4.
             # Heredoc delimiter syntax: the only multiline $GITHUB_OUTPUT
             # format supported on every runner version.
+            # Static compatibility-group pins: a3 -> maintained 8.5.0, a5 (950) ->
+            # early-access 9.1.0. The cann_version values are validated against
+            # third_party/ascend/deps/runtime.json by scripts/check_bom_consistency.py.
             echo 'matrix-ASCEND<<MATRIX_EOF' >> $GITHUB_OUTPUT
             echo '[
               {

@@ -46,6 +46,8 @@ jobs:
     timeout-minutes: 120
     runs-on: linux-amd64-cpu-16
     container:
+      # Static compatibility-group pin: the maintained 8.5.0 group (910b) in
+      # third_party/ascend/deps/runtime.json; validated by scripts/check_bom_consistency.py.
       image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/triton:8.5.0-910b-ubuntu22.04-py3.11-latest
 
     permissions:

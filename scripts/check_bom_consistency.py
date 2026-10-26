@@ -30,10 +30,26 @@ SCHEMA_VERSION = 1
 CHECKOUT_ROOTS = ("", "pr/")
 
 # Beta CANN builder images referenced by CI before the corresponding runtime
-# is official enough to be listed in runtime.json:
-#   - 9.0.0-beta.2 / 9.2.0-beta.1: build-docker-image.yml matrix
-#   - 9.2.0-beta.2: manylinux builder image (workflows/build/wheels.Dockerfile)
+# group is official enough to be listed in runtime.json. Per RFC #2739 §2 these
+# are narrow-scope exceptions with a removal condition, not a second source of
+# truth: each entry must be dropped when its consumer goes away or when a
+# matching runtime group lands in runtime.json (e.g. a 9.2.0 group with the
+# torch pins it actually ships with):
+#   - 9.0.0-beta.2 / 9.2.0-beta.1: build-docker-image.yml beta artifact matrix
+#   - 9.2.0-beta.2: manylinux builder image -- the manylinux ABI needs the
+#     preinstalled CANN; also pinned by npuir-build.yml
 BETA_CANN_WHITELIST = {"9.0.0-beta.2", "9.2.0-beta.1", "9.2.0-beta.2"}
+
+# Guides that must not hardcode an LLVM checkout; they read
+# cmake/llvm-hash.txt dynamically instead. Any 40-hex `git checkout` literal
+# (or hardcoded llvm_patch_<hash>.patch filename) that reappears here is a
+# regression and must at least agree with the BOM.
+DOC_SITES = (
+    "README.md",
+    "README_zh.md",
+    "docs/en/installation_guide.md",
+    "docs/zh/installation_guide.md",
+)
 
 # Matches container tags ("cann:9.0.0-a3-ubuntu22.04-py3.12"), install paths
 # ("cann-9.2.0-beta.2") and cache-key literals ("cann8.5.0").
@@ -201,6 +217,58 @@ def check_workflows(runtime):
                         f"'{arg}' matches no file in the repo")
 
 
+def check_triton_version():
+    """Triton's own version is restated in four places; keep them consistent.
+
+    version.txt is the upstream-facing pin. setup.py and the two
+    ``__version__`` literals restate the same value. Rewriting those upstream
+    files to read version.txt would increase merge friction, so the checker
+    fails loudly when any copy drifts instead.
+    """
+    expected = _read(REPO_ROOT / "version.txt").strip()
+    if not expected:
+        _fail("triton-version", "version.txt is empty")
+        return
+    sites = {
+        "setup.py": r'^TRITON_VERSION\s*=\s*"([^"]+)"',
+        "python/triton/__init__.py": r"^__version__\s*=\s*['\"]([^'\"]+)['\"]",
+        "third_party/ascend/backend/__init__.py": r"^__version__\s*=\s*['\"]([^'\"]+)['\"]",
+    }
+    for rel, pattern in sites.items():
+        match = re.search(pattern, _read(REPO_ROOT / rel), re.MULTILINE)
+        if match is None:
+            _fail("triton-version", f"{rel} has no version literal")
+        elif match.group(1) != expected:
+            _fail("triton-version", f"{rel} declares version {match.group(1)!r}, but version.txt pins {expected!r}")
+
+
+def check_docs_llvm_hash():
+    """The install guides must follow cmake/llvm-hash.txt, not restate it.
+
+    The guides read the pin dynamically (``LLVM_COMMIT=$(cat
+    cmake/llvm-hash.txt)``), so no 40-hex checkout literal should remain. If
+    one is reintroduced, it must at least match the BOM.
+    """
+    llvm_hash = _load_json(DEPS_DIR / "llvm-info.json")["llvm_hash"]
+    checkout_re = re.compile(r"git checkout ([0-9a-f]{40})\b")
+    patch_re = re.compile(r"llvm_patch_([0-9a-f]{8,40})\.patch")
+    for rel in DOC_SITES:
+        text = _read(REPO_ROOT / rel)
+        for match in checkout_re.finditer(text):
+            if match.group(1) != llvm_hash:
+                _fail(
+                    "docs-llvm-hash",
+                    f"{rel}:{_line_no(text, match.start())} hardcodes 'git checkout {match.group(1)}', "
+                    f"but the BOM pins {llvm_hash}; read cmake/llvm-hash.txt instead")
+        for match in patch_re.finditer(text):
+            found = match.group(1)
+            if found != llvm_hash[:len(found)]:
+                _fail(
+                    "docs-llvm-hash",
+                    f"{rel}:{_line_no(text, match.start())} references patch {match.group(0)}, which does "
+                    f"not match the BOM LLVM hash {llvm_hash}")
+
+
 def check_release_policy(runtime):
     runtimes_by_cann = {r["cann"]: r for r in runtime["runtimes"]}
     lines = _read(REPO_ROOT / "docs" / "en" / "community" / "release_policy.md").splitlines()
@@ -258,6 +326,8 @@ def main():
     check_schema_versions()
     check_llvm_info()
     check_toolchain()
+    check_triton_version()
+    check_docs_llvm_hash()
     runtime = _load_json(DEPS_DIR / "runtime.json")
     check_static_pins(runtime)
     check_workflows(runtime)
@@ -272,7 +342,8 @@ def main():
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print("BOM consistency check passed (deps/ BOM, cmake mirrors, static pins, workflows, release policy).")
+    print("BOM consistency check passed (deps/ BOM, cmake mirrors, static pins, triton version, "
+          "docs LLVM refs, workflows, release policy).")
 
 
 if __name__ == "__main__":
