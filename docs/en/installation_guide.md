@@ -60,11 +60,16 @@ If you need to customize the LLVM build process, follow the steps below to compi
 1. **Prepare the source code**: Check out the LLVM source code of the specified version with `git checkout` and apply the patch.
 
     ```bash
+    # Run from the root of your triton-ascend checkout. The pinned LLVM
+    # commit is maintained in cmake/llvm-hash.txt (mirrored from
+    # third_party/ascend/deps/llvm-info.json); reading it dynamically keeps
+    # this guide from drifting when the pin is bumped.
+    LLVM_COMMIT=$(cat cmake/llvm-hash.txt)
     git clone --no-checkout https://github.com/llvm/llvm-project.git
     cd llvm-project
-    git checkout f6ded0be897e2878612dd903f7e8bb85448269e5
-    wget https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_f6ded0b.patch
-    git apply llvm_patch_f6ded0b.patch
+    git checkout "${LLVM_COMMIT}"
+    wget "https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_${LLVM_COMMIT:0:8}.patch"
+    git apply "llvm_patch_${LLVM_COMMIT:0:8}.patch"
     ```
 
 2. **Build LLVM**: The path `/path/llvm-install` is the LLVM installation path planned by the user, which needs to be adjusted according to the actual situation; the path `{PATH_TO}` refers to the root directory of the llvm-project source you checked out in step 1.

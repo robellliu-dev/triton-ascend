@@ -107,11 +107,15 @@ pip install -e .
 ```bash
 # 如果需要自定义构建LLVM过程的，可以先执行这一步再去编译Triton-Ascend
 # 检出指定版本的LLVM源码并应用补丁
+# 在 triton-ascend 仓库根目录下执行。LLVM pin 统一维护在 cmake/llvm-hash.txt
+# （镜像自 third_party/ascend/deps/llvm-info.json）；动态读取可避免 pin 更新后
+# 本指南与实际 pin 漂移。
+LLVM_COMMIT=$(cat cmake/llvm-hash.txt)
 git clone --no-checkout https://github.com/llvm/llvm-project.git
 cd llvm-project
-git checkout f6ded0be897e2878612dd903f7e8bb85448269e5
-wget https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_f6ded0b.patch
-git apply llvm_patch_f6ded0b.patch
+git checkout "${LLVM_COMMIT}"
+wget "https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_${LLVM_COMMIT:0:8}.patch"
+git apply "llvm_patch_${LLVM_COMMIT:0:8}.patch"
 
 export LLVM_INSTALL_PREFIX=/path/to/llvm-install
 

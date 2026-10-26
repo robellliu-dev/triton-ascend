@@ -107,11 +107,16 @@ pip install -e .
 ```bash
 # If you need to customize the LLVM build process, you can execute this step first before compiling Triton-Ascend
 # Check out the specified version of LLVM source code and apply patches
+# Run from the root of your triton-ascend checkout. The pinned LLVM commit is
+# maintained in cmake/llvm-hash.txt (mirrored from
+# third_party/ascend/deps/llvm-info.json); reading it dynamically keeps this
+# guide from drifting when the pin is bumped.
+LLVM_COMMIT=$(cat cmake/llvm-hash.txt)
 git clone --no-checkout https://github.com/llvm/llvm-project.git
 cd llvm-project
-git checkout f6ded0be897e2878612dd903f7e8bb85448269e5
-wget https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_f6ded0b.patch
-git apply llvm_patch_f6ded0b.patch
+git checkout "${LLVM_COMMIT}"
+wget "https://raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch/llvm_patch_${LLVM_COMMIT:0:8}.patch"
+git apply "llvm_patch_${LLVM_COMMIT:0:8}.patch"
 
 export LLVM_INSTALL_PREFIX=/path/to/llvm-install
 
