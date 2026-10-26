@@ -5,12 +5,15 @@ on:
     paths:
       - third_party/ascend/deps/**
       - third_party/ascend/patch/**
+      - third_party/ascend/build/**
       - cmake/**
       - requirements.txt
       - docker/**
       - .github/workflows/**
       - scripts/check_bom_consistency.py
+      - scripts/build-llvm-project.sh
       - docs/en/community/release_policy.md
+  merge_group:
   schedule:
     - cron: "0 2 * * 1"
   workflow_dispatch:

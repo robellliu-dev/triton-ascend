@@ -20,6 +20,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPS_DIR = REPO_ROOT / "third_party" / "ascend" / "deps"
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
+# BOM schema revision understood by this checker; every deps/*.json must
+# declare exactly this version.
+SCHEMA_VERSION = 1
+
+# Checkout roots used by workflows when calling hashFiles(). A hashFiles()
+# argument is resolved only after stripping one of these declared prefixes --
+# never an arbitrary leading path component.
+CHECKOUT_ROOTS = ("", "pr/")
+
 # Beta CANN builder images referenced by CI before the corresponding runtime
 # is official enough to be listed in runtime.json:
 #   - 9.0.0-beta.2 / 9.2.0-beta.1: build-docker-image.yml matrix
@@ -31,10 +40,15 @@ BETA_CANN_WHITELIST = {"9.0.0-beta.2", "9.2.0-beta.1", "9.2.0-beta.2"}
 CANN_VERSION_RE = re.compile(r"cann[:-]?(\d+(?:\.\d+)*(?:-beta\.\d+)?)")
 
 errors = []
+warnings = []
 
 
 def _fail(check, message):
     errors.append(f"[{check}] {message}")
+
+
+def _warn(check, message):
+    warnings.append(f"[{check}] {message}")
 
 
 def _load_json(path):
@@ -70,36 +84,57 @@ def check_toolchain():
         _fail("toolchain", f"toolchain.json json={toolchain['json']} != cmake/json-version.txt={mirrored}")
 
 
+def check_schema_versions():
+    for name in ("llvm-info.json", "toolchain.json", "runtime.json"):
+        data = _load_json(DEPS_DIR / name)
+        if data.get("schema_version") != SCHEMA_VERSION:
+            _fail("schema",
+                  f"{name} must declare \"schema_version\": {SCHEMA_VERSION} (got {data.get('schema_version')!r})")
+
+
 def check_static_pins(runtime):
-    torch_npu_versions = {r["torch_npu"] for r in runtime["runtimes"]}
-    cann_versions = {r["cann"] for r in runtime["runtimes"]}
+    runtimes_by_cann = {r["cann"]: r for r in runtime["runtimes"]}
+
+    # Consumers are validated against the complete runtime group (the full
+    # stack tuple), never against the union of values across groups: a value
+    # that only exists in another CANN group (e.g. a planned one) must not
+    # satisfy this consumer.
 
     pin = re.search(r"^torch-npu==(\S+)", _read(REPO_ROOT / "requirements.txt"), re.MULTILINE)
     if pin is None:
         _fail("static-pins", "requirements.txt has no 'torch-npu==<version>' pin")
-    elif pin.group(1) not in torch_npu_versions:
-        _fail(
-            "static-pins", f"requirements.txt torch-npu=={pin.group(1)} is not a torch_npu value in runtime.json "
-            f"(known: {sorted(torch_npu_versions)})")
+    else:
+        default_group = runtimes_by_cann.get(runtime["default_cann"])
+        if default_group is not None and pin.group(1) != default_group["torch_npu"]:
+            _fail(
+                "static-pins", f"requirements.txt torch-npu=={pin.group(1)} does not match the torch_npu of the "
+                f"runtime.json group selected by default_cann={runtime['default_cann']} "
+                f"(expected {default_group['torch_npu']})")
 
     dockerfile = _read(REPO_ROOT / "docker" / "Dockerfile")
     pin = re.search(r"^ARG\s+TORCH_NPU_VERSION=(\S+)", dockerfile, re.MULTILINE)
     if pin is None:
         _fail("static-pins", "docker/Dockerfile has no 'ARG TORCH_NPU_VERSION=' default")
-    elif pin.group(1) not in torch_npu_versions:
-        _fail(
-            "static-pins", f"docker/Dockerfile TORCH_NPU_VERSION={pin.group(1)} is not a torch_npu value in "
-            f"runtime.json (known: {sorted(torch_npu_versions)})")
+        torch_npu_default = None
+    else:
+        torch_npu_default = pin.group(1)
 
     pin = re.search(r"^ARG\s+CANN_BASE_IMAGE=(\S+)", dockerfile, re.MULTILINE)
     if pin is None:
         _fail("static-pins", "docker/Dockerfile has no 'ARG CANN_BASE_IMAGE=' default")
     else:
         cann = CANN_VERSION_RE.search(pin.group(1))
-        if cann is not None and cann.group(1) not in cann_versions:
+        if cann is None:
+            _fail("static-pins", f"docker/Dockerfile CANN_BASE_IMAGE={pin.group(1)} carries no CANN version")
+        elif cann.group(1) not in runtimes_by_cann:
             _fail(
                 "static-pins", f"docker/Dockerfile CANN_BASE_IMAGE pins CANN {cann.group(1)}, not a cann value in "
-                f"runtime.json (known: {sorted(cann_versions)})")
+                f"runtime.json (known: {sorted(runtimes_by_cann)})")
+        elif torch_npu_default is not None and torch_npu_default != runtimes_by_cann[cann.group(1)]["torch_npu"]:
+            _fail(
+                "static-pins", f"docker/Dockerfile TORCH_NPU_VERSION={torch_npu_default} does not match the "
+                f"torch_npu of the runtime.json group selected by CANN_BASE_IMAGE (CANN {cann.group(1)}, "
+                f"expected {runtimes_by_cann[cann.group(1)]['torch_npu']})")
 
 
 def _workflow_files():
@@ -113,10 +148,14 @@ def _glob_exists(relative):
 
     Some workflows check the PR out under a ``pr/`` directory, so arguments
     like ``pr/cmake/llvm-hash.txt`` must match after stripping the prefix.
+    Only the declared :data:`CHECKOUT_ROOTS` prefixes may be stripped; an
+    arbitrary leading component (a typo like ``wrng/requirements.txt``) must
+    keep failing even when the remaining path exists.
     """
-    parts = Path(relative).parts
-    for i in range(len(parts)):
-        candidate = "/".join(parts[i:])
+    for root in CHECKOUT_ROOTS:
+        if not relative.startswith(root):
+            continue
+        candidate = relative[len(root):]
         if glob.glob(os.path.join(REPO_ROOT, candidate), recursive=True):
             return True
     return False
@@ -163,7 +202,7 @@ def check_workflows(runtime):
 
 
 def check_release_policy(runtime):
-    torch_versions = {r["torch"] for r in runtime["runtimes"]}
+    runtimes_by_cann = {r["cann"]: r for r in runtime["runtimes"]}
     lines = _read(REPO_ROOT / "docs" / "en" / "community" / "release_policy.md").splitlines()
 
     # The "main Branch Mapping" header uniquely contains "Triton commit hash";
@@ -198,15 +237,25 @@ def check_release_policy(runtime):
             _fail(
                 "release-policy", f"release_policy.md maps 'main' to CANN {cann}, but runtime.json "
                 f"default_cann={runtime['default_cann']}")
-        if torch not in torch_versions:
-            _fail(
-                "release-policy", f"release_policy.md maps 'main' to PyTorch {torch}, which is not a torch value "
-                f"in runtime.json (known: {sorted(torch_versions)})")
+        # The PyTorch column is a warning, not an error: the documented
+        # torch / torch-npu pairing for 'main' is currently self-contradictory
+        # across release_policy.md, release_note.md, README.md, requirements.txt
+        # and docker/Dockerfile (see "Known reconciliation items" in
+        # third_party/ascend/deps/README.md). The checker reports the drift
+        # for the runtime owners to reconcile; it does not adjudicate it.
+        default_group = runtimes_by_cann.get(runtime["default_cann"])
+        expected_torch = default_group["torch"] if default_group is not None else "<unknown group>"
+        if torch != expected_torch:
+            _warn(
+                "release-policy", f"release_policy.md maps 'main' to PyTorch {torch}, but the runtime.json group "
+                f"for default_cann={runtime['default_cann']} declares torch {expected_torch}; this documented "
+                f"contradiction is tracked for runtime owners and does not fail the check")
         return
     _fail("release-policy", "no 'main' row found in the 'main Branch Mapping' table")
 
 
 def main():
+    check_schema_versions()
     check_llvm_info()
     check_toolchain()
     runtime = _load_json(DEPS_DIR / "runtime.json")
@@ -214,6 +263,10 @@ def main():
     check_workflows(runtime)
     check_release_policy(runtime)
 
+    if warnings:
+        print("BOM consistency warnings (reported for reconciliation, not failing):")
+        for warning in warnings:
+            print(f"  - {warning}")
     if errors:
         print("BOM consistency check FAILED:")
         for error in errors:

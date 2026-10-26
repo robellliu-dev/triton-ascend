@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "bisheng": {
     "x86_64": {
       "file": "ascendnpu-ir_2.0.0_linux-x86-pr_3967.run",

@@ -47,6 +47,25 @@ read `toolchain.json` directly.
 4. Commit everything in one change so cache keys derived from these files
    rotate atomically.
 
+## Known reconciliation items
+
+The values below currently disagree across the repository. They are recorded
+here (and surfaced by `scripts/check_bom_consistency.py` as warnings where
+applicable) instead of being silently adjudicated by this BOM; the runtime
+owners must reconcile them before the affected groups can be called verified:
+
+- `runtime.json` maps the `default_cann=9.0.0` (main) group to
+  torch `2.7.1` / torch-npu `2.7.1.post8`, which matches `requirements.txt`
+  and the `docker/Dockerfile` defaults.
+- `docs/en/community/release_policy.md` maps the `main` branch to CANN 9.0.0
+  but PyTorch 2.10.0.
+- `release_note.md` and the top-level `README.md` describe `main` as pairing
+  with torch-npu 2.10.0.post7 and CANN 9.2.0 (a *planned* group in
+  `runtime.json`, not the current default).
+- `docker/Dockerfile` comments note that the CANN 9.1.0 (a5/Ascend 950) image
+  line uses torch-npu 2.10.0.post4; no runtime group declares that pairing
+  yet (the 9.1.0 entry currently declares 2.7.1.post8).
+
 ## Out of scope
 
 - The `Triton-distributed-ascend` submodule (pinned via git like all
