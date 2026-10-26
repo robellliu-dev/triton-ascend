@@ -6,6 +6,7 @@ on:
       - cmake/llvm-hash.txt
       - third_party/ascend/patch/llvm_patch_*.patch
       - third_party/ascend/deps/llvm-info.json
+      - third_party/ascend/deps/runtime.json
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   pull_request:
@@ -13,6 +14,7 @@ on:
       - cmake/llvm-hash.txt
       - third_party/ascend/patch/llvm_patch_*.patch
       - third_party/ascend/deps/llvm-info.json
+      - third_party/ascend/deps/runtime.json
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   workflow_dispatch:
@@ -30,13 +32,24 @@ permissions:
 
 jobs:
 
+  deps:
+    runs-on: ubuntu-latest
+    outputs:
+      cann: ${{ steps.deps.outputs.cann }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve pinned CANN version from the BOM
+        id: deps
+        run: echo "cann=$(jq -r .default_cann third_party/ascend/deps/runtime.json)" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: deps
     name: Build on ${{ matrix.config.runner }}
     runs-on: ${{ matrix.config.runs_on }}
     # Cann container provides buildx remote builder config for AlmaLinux.
     # Ubuntu native builds also work inside this container.
     container:
-      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/cann:9.0.0-a3-ubuntu22.04-py3.12
+      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/cann:${{ needs.deps.outputs.cann }}-a3-ubuntu22.04-py3.12
     timeout-minutes: 240
     env:
       PIP_INDEX_URL: http://cache-service.nginx-pypi-cache.svc.cluster.local/pypi/simple
