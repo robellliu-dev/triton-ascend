@@ -11,9 +11,12 @@ on:
       - setup.py
       - pyproject.toml
       - version.txt
-      - cmake/llvm-hash.txt
-      - cmake/json-version.txt
-      - third_party/ascend/deps/**
+      - cmake/llvm-info.json
+      - cmake/json-info.json
+      - cmake/bisheng-info.json
+      - cmake/ascend-runtime-info.json
+      - cmake/dependencies.py
+      - cmake/TritonDependencies.cmake
       - scripts/check_bom_consistency.py
   schedule:
     - cron: "0 8 * * *"

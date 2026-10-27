@@ -53,6 +53,9 @@ ENV TRITON_BUILD_WITH_CLANG_LLD=true \
 COPY . /project/
 WORKDIR /project
 
+# Validate the same JSON inputs used by setup.py before starting a source build.
+RUN /opt/python/${PYTHON_VERSION}-${PYTHON_VERSION}/bin/python3 /project/cmake/dependencies.py --validate
+
 # ---------------------------------------------------------------------------
 # Build the wheel with the target Python from the manylinux toolchain.
 # Put the pip-installed ninja/cmake ahead of the system ones on PATH.

@@ -9,6 +9,5 @@
       "file": "ascendnpu-ir_2.0.0_linux-aarch64-pr_3967.run",
       "sha256": "524385FDD6E570EEB7F92D789741BDFD7FDA49811B1A1CEE8155E7A16C25E10D"
     }
-  },
-  "json_version_file": "cmake/json-version.txt"
+  }
 }
