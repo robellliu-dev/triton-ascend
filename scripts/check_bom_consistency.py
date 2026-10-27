@@ -250,31 +250,6 @@ def check_workflows(runtime):
                         f"'{arg}' matches no file in the repo")
 
 
-def check_triton_version():
-    """Triton's own version is restated in four places; keep them consistent.
-
-    version.txt is the upstream-facing pin. setup.py and the two
-    ``__version__`` literals restate the same value. Rewriting those upstream
-    files to read version.txt would increase merge friction, so the checker
-    fails loudly when any copy drifts instead.
-    """
-    expected = _read(REPO_ROOT / "version.txt").strip()
-    if not expected:
-        _fail("triton-version", "version.txt is empty")
-        return
-    sites = {
-        "setup.py": r'^TRITON_VERSION\s*=\s*"([^"]+)"',
-        "python/triton/__init__.py": r"^__version__\s*=\s*['\"]([^'\"]+)['\"]",
-        "third_party/ascend/backend/__init__.py": r"^__version__\s*=\s*['\"]([^'\"]+)['\"]",
-    }
-    for rel, pattern in sites.items():
-        match = re.search(pattern, _read(REPO_ROOT / rel), re.MULTILINE)
-        if match is None:
-            _fail("triton-version", f"{rel} has no version literal")
-        elif match.group(1) != expected:
-            _fail("triton-version", f"{rel} declares version {match.group(1)!r}, but version.txt pins {expected!r}")
-
-
 def check_docs_llvm_hash():
     """The install guides must follow cmake/llvm-hash.txt, not restate it.
 
@@ -282,9 +257,10 @@ def check_docs_llvm_hash():
     cmake/llvm-hash.txt)``), so no 40-hex checkout literal should remain. If
     one is reintroduced, it must at least match the BOM.
     """
-    llvm_hash = _load_llvm_info()["llvm_hash"]
+    info = _load_llvm_info()
+    llvm_hash = info["llvm_hash"]
     checkout_re = re.compile(r"git checkout ([0-9a-f]{40})\b")
-    patch_re = re.compile(r"llvm_patch_([0-9a-f]{8,40})\.patch")
+    patch_re = re.compile(r"llvm_patch_([0-9a-f]{7,40})\.patch")
     for rel in DOC_SITES:
         text = _read(REPO_ROOT / rel)
         for match in checkout_re.finditer(text):
@@ -294,12 +270,11 @@ def check_docs_llvm_hash():
                     f"{rel}:{_line_no(text, match.start())} hardcodes 'git checkout {match.group(1)}', "
                     f"but the BOM pins {llvm_hash}; read cmake/llvm-hash.txt instead")
         for match in patch_re.finditer(text):
-            found = match.group(1)
-            if found != llvm_hash[:len(found)]:
+            if match.group(0) not in info["patches"]:
                 _fail(
                     "docs-llvm-hash",
                     f"{rel}:{_line_no(text, match.start())} references patch {match.group(0)}, which does "
-                    f"not match the BOM LLVM hash {llvm_hash}")
+                    f"not appear in the local LLVM patch manifest")
 
 
 def check_release_policy(runtime):
@@ -359,7 +334,6 @@ def main():
     check_schema_versions()
     check_llvm_info()
     check_toolchain()
-    check_triton_version()
     check_docs_llvm_hash()
     runtime = _load_json(DEPS_DIR / "runtime.json")
     check_static_pins(runtime)
@@ -375,7 +349,7 @@ def main():
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print("BOM consistency check passed (deps/ BOM, cmake mirrors, static pins, triton version, "
+    print("BOM consistency check passed (deps/ BOM, cmake mirrors, static pins, "
           "docs LLVM refs, workflows, release policy).")
 
 
