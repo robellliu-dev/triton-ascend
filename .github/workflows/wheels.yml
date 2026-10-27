@@ -15,6 +15,8 @@ on:
       - cmake/json-version.txt
       - third_party/ascend/deps/**
       - scripts/check_bom_consistency.py
+      - third_party/ascend/build/**
+      - third_party/ascend/patch/llvm_patch_*.patch
   schedule:
     - cron: "0 8 * * *"
 

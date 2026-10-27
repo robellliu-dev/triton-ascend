@@ -37,8 +37,8 @@ BETA_CANN_EXCEPTIONS = {
     ".github/workflows/build/wheels.Dockerfile": {"9.2.0-beta.2"},
 }
 
-# Guides that must not hardcode an LLVM checkout; they read
-# cmake/llvm-hash.txt dynamically instead. Any 40-hex `git checkout` literal
+# Guides use the local LLVM reader for the canonical pin and patch manifest.
+# Any 40-hex `git checkout` literal
 # (or hardcoded llvm_patch_<hash>.patch filename) that reappears here is a
 # regression and must at least agree with the BOM.
 DOC_SITES = (
@@ -302,12 +302,7 @@ def check_workflows(runtime):
 
 
 def check_docs_llvm_hash():
-    """The install guides must follow cmake/llvm-hash.txt, not restate it.
-
-    The guides read the pin dynamically (``LLVM_COMMIT=$(cat
-    cmake/llvm-hash.txt)``), so no 40-hex checkout literal should remain. If
-    one is reintroduced, it must at least match the BOM.
-    """
+    """Check reintroduced literals against the local pin and patch manifest."""
     info = _load_llvm_info()
     llvm_hash = info["llvm_hash"]
     checkout_re = re.compile(r"git checkout ([0-9a-f]{40})\b")
