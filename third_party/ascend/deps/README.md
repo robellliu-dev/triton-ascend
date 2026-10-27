@@ -58,6 +58,10 @@ manual or generated second LLVM SHA is needed in the meantime.
   Missing/duplicate groups and active planned selections fail. These checks
   are an interim constraint, **not** the RFC's complete chip/arch/Python/track
   profile validator or a compatibility certification.
+  CANN 9.2.0 is now observed in the upstream-added nightly image workflow,
+  so it is recorded as experimental and unverified, rather than planned.
+  Experimental groups cannot become the default container/requirements stack
+  or Docker default through these selectors.
 - `reconciliation.release_policy.main` records the exact existing
   CANN9.0.0/documented-torch2.10.0/profile-torch2.7.1 contradiction. Only that
   tuple is a warning with tracking/owner/exit information. A new mismatch
