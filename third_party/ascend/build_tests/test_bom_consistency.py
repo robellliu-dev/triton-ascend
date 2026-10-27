@@ -18,6 +18,8 @@ def checker(tmp_path, monkeypatch):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / relative, target)
     shutil.copytree(REPO / "third_party/ascend/deps", tmp_path / "third_party/ascend/deps")
+    (tmp_path / "cmake").mkdir()
+    shutil.copyfile(REPO / "cmake/json-version.txt", tmp_path / "cmake/json-version.txt")
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(module, "DEPS_DIR", tmp_path / "third_party/ascend/deps")
     return module
@@ -67,3 +69,74 @@ def test_only_the_recorded_reconciliation_is_a_warning(checker):
 def test_unknown_checkout_prefix_stays_invalid(checker):
     assert not checker._glob_exists("wrong/requirements.txt")
     assert checker._glob_exists("pr/requirements.txt")
+
+
+@pytest.mark.parametrize("mutation", ["copied-json", "invalid-checksum", "unsafe-file", "missing-arch"])
+def test_toolchain_rejects_invalid_inputs(checker, mutation):
+    path = checker.DEPS_DIR / "toolchain.json"
+    data = json.loads(path.read_text())
+    if mutation == "copied-json":
+        data["json"] = "v3.11.3"
+    elif mutation == "invalid-checksum":
+        data["bisheng"]["x86_64"]["sha256"] = "bad"
+    elif mutation == "unsafe-file":
+        data["bisheng"]["x86_64"]["file"] = "../outside.run"
+    else:
+        del data["bisheng"]["aarch64"]
+    path.write_text(json.dumps(data))
+    checker.check_toolchain()
+    assert checker.errors
+
+
+@pytest.mark.parametrize("mutation",
+                         ["unknown-field", "unknown-status", "not-a-list", "not-a-group", "missing-consumers"])
+def test_malformed_runtime_is_reported_without_a_traceback(checker, mutation):
+    data = json.loads((checker.DEPS_DIR / "runtime.json").read_text())
+    if mutation == "unknown-field":
+        data["default_can"] = data["default_cann"]
+    elif mutation == "unknown-status":
+        data["runtimes"][0]["status"] = "typo"
+    elif mutation == "not-a-list":
+        data["runtimes"] = {}
+    elif mutation == "not-a-group":
+        data["runtimes"] = [None]
+    else:
+        del data["consumers"]
+    assert not checker._runtime_groups(data)
+    assert checker.errors
+
+
+@pytest.mark.parametrize("contents", ['{"schema_version":true}', '{"schema_version":1,"schema_version":1}', '[]'])
+def test_json_loader_rejects_bad_envelopes(checker, contents):
+    path = checker.DEPS_DIR / "runtime.json"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        checker._load_json(path)
+
+
+@pytest.mark.parametrize("selection", ["9.0.0", "missing", "9.2.0", None, []])
+def test_resolver_emits_only_a_valid_active_default(checker, monkeypatch, capsys, selection):
+    import sys
+    path = checker.DEPS_DIR / "runtime.json"
+    data = json.loads(path.read_text())
+    data["default_cann"] = selection
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(sys, "argv", ["checker", "--default-cann"])
+    if selection == "9.0.0":
+        checker.main()
+        assert capsys.readouterr().out == "9.0.0\n"
+    else:
+        with pytest.raises(SystemExit) as exc:
+            checker.main()
+        assert exc.value.code == 1
+        assert "BOM consistency check FAILED" in capsys.readouterr().out
+
+
+def test_beta_exception_does_not_allow_an_unrelated_container(checker, monkeypatch):
+    workflows = checker.REPO_ROOT / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "unrelated.yml").write_text("image: registry/triton:9.2.0-beta.2-a3\n")
+    monkeypatch.setattr(checker, "WORKFLOWS_DIR", workflows)
+    runtime = json.loads((checker.DEPS_DIR / "runtime.json").read_text())
+    checker.check_workflows(runtime)
+    assert checker.errors

@@ -48,9 +48,10 @@ manual or generated second LLVM SHA is needed in the meantime.
 
 ## Other files and current limits
 
-- `toolchain.json` holds Bisheng run files/checksums and the nlohmann-json
-  version. Its json pin still has an equality-checked `cmake/json-version.txt`
-  compatibility mirror; this change does not pretend that duplication is gone.
+- `toolchain.json` holds Bisheng run files/checksums and a `json_version_file`
+  reference to `cmake/json-version.txt`. The text file is the only persisted
+  nlohmann-json version; `setup.py` reads it to construct the download URL.
+  Updating metadata alone used to leave the hardcoded download unchanged.
 - `runtime.json` records observed CANN groups and current literal consumers.
   `requirements.txt` is explicitly assigned to its legacy 8.5.0 group; Docker
   defaults are checked against their own CANN base and torch/torch-npu pins.
@@ -76,14 +77,19 @@ consumer integrity migration.
    Do not change another consumer implicitly by retargeting a global default.
 3. Run `python scripts/check_bom_consistency.py` and
    `python -m pytest -q third_party/ascend/build_tests`.
-4. Ensure LLVM-dependent cache keys include **both** `cmake/llvm-hash.txt`
-   and actual patch contents, plus metadata and the recipe/platform inputs
+4. Ensure aggregate dependency cache keys include `cmake/llvm-hash.txt`,
+   `cmake/json-version.txt` and actual patch contents, plus metadata and recipe/platform inputs
    appropriate to that cache. Runtime/README-only changes are not LLVM inputs.
 
 Catalog files belong to the same source checkout as their consumers. Release
 builds must not silently read a different branch's latest metadata. Track
 selection, NPU-IR locking and the full cross-branch rollout remain RFC work,
 not behavior claimed as implemented by these prototype PRs.
+
+The consistency checker rejects malformed or duplicate JSON keys, invalid
+toolchain file names/checksums and runtime selections before emitting a legacy
+container tag with `--default-cann`. Its temporary beta exceptions are scoped
+to the observed workflow files. This is not a complete environment validator.
 
 ## Workflow adoption prototype
 

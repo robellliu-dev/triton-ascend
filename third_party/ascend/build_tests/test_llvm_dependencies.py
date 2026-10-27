@@ -54,7 +54,8 @@ def test_invalid_canonical_revision_is_rejected(load_info, inputs, value):
         load_info(root)
 
 
-@pytest.mark.parametrize("change", ["missing", "traversal", "duplicate", "extra", "schema", "copied-pin"])
+@pytest.mark.parametrize("change",
+                         ["missing", "traversal", "duplicate", "extra", "schema", "copied-pin", "newline-name"])
 def test_invalid_metadata_is_rejected(load_info, inputs, change):
     root, metadata, _ = inputs
     data = json.loads(metadata.read_text())
@@ -68,6 +69,8 @@ def test_invalid_metadata_is_rejected(load_info, inputs, change):
         (root / "third_party/ascend/patch/llvm_patch_extra.patch").touch()
     elif change == "schema":
         data["schema_version"] = True
+    elif change == "newline-name":
+        data["patches"] = ["llvm_patch_bad\nname.patch"]
     else:
         data["llvm_hash"] = "a" * 40
     metadata.write_text(json.dumps(data))

@@ -31,10 +31,14 @@ def test_metadata_reader_bootstraps_python_for_each_target(target, tmp_path):
     harness = r'''
 set -eu
 installed=
+pip_installed=
 sed() { :; }
 apt-get() {
   case " $* " in
     *" install "*" python3 "*) installed=yes ;;
+  esac
+  case " $* " in
+    *" install "*" python3-pip "*) pip_installed=yes ;;
   esac
 }
 command() {
@@ -46,11 +50,16 @@ command() {
 }
 python3() {
   [ "$installed" = yes ]
+  if [ "${1:-} ${2:-}" = "-m pip" ]; then
+    [ "$pip_installed" = yes ]
+    return
+  fi
   "$TEST_PYTHON" "$@"
 }
 '''
     output = tmp_path / "github-env"
     script = harness + step("Config mirrors & install build tools") + "\n" + step("Fetch LLVM Commit Hash")
+    script += "\n" + step("Install Prerequisites").splitlines()[0]
     subprocess.run([bash, "-c", script], cwd=REPO,
                    env={**os.environ, "TEST_PYTHON": Path(sys.executable).as_posix(), "GITHUB_ENV":
                         output.as_posix()}, check=True, capture_output=True, text=True)
