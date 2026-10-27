@@ -33,6 +33,7 @@ def test_runtime_selection_fails_closed(checker, mutation):
     elif mutation == "duplicate":
         runtime["runtimes"].append(dict(runtime["runtimes"][0]))
     elif mutation == "planned":
+        runtime["runtimes"][-1]["status"] = "planned"
         runtime["default_cann"] = "9.2.0"
         requirements = checker.REPO_ROOT / "requirements.txt"
         requirements.write_text("torch-npu==2.10.0.post7\n", encoding="utf-8")
@@ -140,3 +141,26 @@ def test_beta_exception_does_not_allow_an_unrelated_container(checker, monkeypat
     runtime = json.loads((checker.DEPS_DIR / "runtime.json").read_text())
     checker.check_workflows(runtime)
     assert checker.errors
+
+
+def test_uppercase_workflow_pin_cannot_select_a_planned_runtime(checker, monkeypatch):
+    workflows = checker.REPO_ROOT / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "release.yml").write_text('env:\n  CANN_VERSION: "9.2.0"\n')
+    monkeypatch.setattr(checker, "WORKFLOWS_DIR", workflows)
+    runtime = json.loads((checker.DEPS_DIR / "runtime.json").read_text())
+    runtime["runtimes"][-1]["status"] = "planned"
+    checker.check_workflows(runtime)
+    assert checker.errors
+
+
+def test_observed_nightly_stack_is_recorded_without_becoming_the_default(checker, monkeypatch):
+    workflow = REPO / ".github/workflows/release-docker-images-nightly.yml"
+    text = workflow.read_text(encoding="utf-8")
+    import re
+    runtime = json.loads((checker.DEPS_DIR / "runtime.json").read_text())
+    group = next(group for group in runtime["runtimes"] if group["cann"] == "9.2.0")
+    assert group["status"] == "experimental"
+    assert group["torch"] == re.search(r'PYTORCH_VERSION: "([^"]+)"', text).group(1)
+    assert group["torch_npu"] == re.search(r'TORCH_NPU_VERSION: "([^"]+)"', text).group(1)
+    assert runtime["default_cann"] != group["cann"]

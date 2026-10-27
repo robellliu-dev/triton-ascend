@@ -22,7 +22,7 @@
     },
     {
       "cann": "9.2.0",
-      "status": "planned",
+      "status": "experimental",
       "torch": "2.10.0",
       "torch_npu": "2.10.0.post7"
     }
