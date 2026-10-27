@@ -1,73 +1,86 @@
-# Dependency BOM (Bill of Materials)
+# Ascend dependency catalog (source BOM)
 
-This directory is the single source of truth for the external dependencies
-pinned by Triton-Ascend builds and CI. Consumers — the `setup.py` hooks,
-build scripts and GitHub Actions workflows — read their pinned versions from
-the files below instead of hardcoding them, mirroring how other backends
-(e.g. Intel XPU) keep their dependency pins in one place.
+This directory indexes Ascend-owned dependency metadata. It is not an artifact
+SBOM or proof that a runtime combination has passed hardware validation.
+The current PR is a migration prototype; the full profile/track model in RFC
+#2739 is not implemented here.
 
-## Files
+## LLVM: one revision pin, separate metadata
 
-| File | Contents | Read by |
-| ---- | -------- | ------- |
-| `llvm-info.json` | LLVM commit hash, `llvm_patch_*.patch` manifest, prebuilt-package checksums | `third_party/ascend/build/setup_patch.py` (`json.load` — prebuilt LLVM download), `scripts/build-llvm-project.sh` (`jq` — local LLVM builds), `.github/workflows/llvm-build.yml` (`jq` — prebuilt LLVM publishing) |
-| `toolchain.json` | Bisheng compiler run packages per arch (with sha256), nlohmann-json version | Bisheng install steps in the CI workflows (`jq`) |
-| `runtime.json` | Supported CANN runtimes and their matching torch / torch-npu versions | CI matrix values and container image tags |
+| File | Authority and readers |
+| --- | --- |
+| `cmake/llvm-hash.txt` | The **only persisted LLVM revision pin** for this source checkout. Existing upstream-derived `setup.py` and external build/sync readers keep using it. |
+| `llvm-info.json` | References that file through `llvm_hash_file` and lists Ascend LLVM patches. It does not copy the SHA. |
+| `third_party/ascend/build/llvm.py` | Dependency-free reader/CLI used by Ascend packaging, the local shell wrapper, LLVM CI and the consistency check. No Triton/setuptools import or network access. |
 
-`toolchain.json` and `runtime.json` are currently read by
-`scripts/check_bom_consistency.py` only; the workflows still carry their own
-copies of some of these values and are migrated to read the BOM directly in
-follow-up changes. The consistency check keeps the two in sync in the
-meantime.
+```json
+{
+  "schema_version": 1,
+  "llvm_hash_file": "cmake/llvm-hash.txt",
+  "patches": ["llvm_patch_f6ded0b.patch"]
+}
+```
 
-## Relation to the `cmake/` mirrors
+The reader validates the canonical full SHA, metadata fields and the exact
+sorted patch set. `llvm_hash` exists only in its resolved in-memory result.
+Patch filenames must come from the manifest, never from a SHA prefix: the
+current filename uses seven characters, whereas the package name uses eight.
+Patch-content hashing and existing LLVM artifact names are unchanged.
 
-Two legacy single-value files under `cmake/` are still consumed by code shared
-with upstream Triton and are kept as mirrors of this BOM:
+Run from any working directory with the checkout path:
 
-- `cmake/llvm-hash.txt` mirrors `llvm-info.json` -> `llvm_hash`
-- `cmake/json-version.txt` mirrors `toolchain.json` -> `json`
+```bash
+python3 /path/to/triton-ascend/third_party/ascend/build/llvm.py --hash
+python3 /path/to/triton-ascend/third_party/ascend/build/llvm.py --patches
+```
 
-`scripts/check_bom_consistency.py` (run by the *BOM Consistency Check* CI
-workflow) fails if a mirror drifts from the BOM, so a version bump that
-forgets one of the copies is caught at PR time.
+The shell build wrapper honors an explicit `LLVM_COMMIT_HASH` before invoking
+the reader and uses `${PYTHON:-python3}`. Python 3 must be available when the
+reader is needed. Custom/offline LLVM paths retain their existing semantics.
+The existing `MANIFEST.in` grafts both `cmake` and `third_party`, including the
+reader, canonical pin and metadata in source distributions.
 
-`cmake/bisheng-version.txt` is the pre-BOM location of the Bisheng pins and is
-still consumed by several workflows; it will be removed once those workflows
-read `toolchain.json` directly.
+Keeping these files is reasonable because their responsibilities differ.
+Moving the sole SHA into JSON and removing the text file is possible only
+after migrating all build/sync consumers, including external tools and
+release branches. This PR avoids that broader compatibility change. No
+manual or generated second LLVM SHA is needed in the meantime.
 
-## Updating a dependency
+## Other files and current limits
 
-1. Edit the entry in the JSON file in this directory. Never edit the `cmake/`
-   mirrors by hand.
-2. Update the mirrors (`cmake/llvm-hash.txt`, `cmake/json-version.txt`) and —
-   until the remaining migrations land — the still-hardcoded workflow values
-   to the same version.
-3. Run `python scripts/check_bom_consistency.py` locally; it must pass.
-4. Commit everything in one change so cache keys derived from these files
-   rotate atomically.
+- `toolchain.json` holds Bisheng run files/checksums and the nlohmann-json
+  version. Its json pin still has an equality-checked `cmake/json-version.txt`
+  compatibility mirror; this change does not pretend that duplication is gone.
+- `runtime.json` records observed CANN groups and current literal consumers.
+  `requirements.txt` is explicitly assigned to its legacy 8.5.0 group; Docker
+  defaults are checked against their own CANN base and torch/torch-npu pins.
+  Missing/duplicate groups and active planned selections fail. These checks
+  are an interim constraint, **not** the RFC's complete chip/arch/Python/track
+  profile validator or a compatibility certification.
+- `reconciliation.release_policy.main` records the exact existing
+  CANN9.0.0/documented-torch2.10.0/profile-torch2.7.1 contradiction. Only that
+  tuple is a warning with tracking/owner/exit information. A new mismatch
+  fails; runtime/release owner reconciliation is still required.
 
-## Known reconciliation items
+The default group's and A5's conflicting compatibility statements remain
+unverified; this metadata migration does not select a new supported stack.
+Nullable LLVM checksum slots and an unused build number were removed rather
+than implying artifact verification. RFC P3 defines a separate producer/
+consumer integrity migration.
 
-The values below currently disagree across the repository. They are recorded
-here (and surfaced by `scripts/check_bom_consistency.py` as warnings where
-applicable) instead of being silently adjudicated by this BOM; the runtime
-owners must reconcile them before the affected groups can be called verified:
+## Updating inputs
 
-- `runtime.json` maps the `default_cann=9.0.0` (main) group to
-  torch `2.7.1` / torch-npu `2.7.1.post8`, which matches `requirements.txt`
-  and the `docker/Dockerfile` defaults.
-- `docs/en/community/release_policy.md` maps the `main` branch to CANN 9.0.0
-  but PyTorch 2.10.0.
-- `release_note.md` and the top-level `README.md` describe `main` as pairing
-  with torch-npu 2.10.0.post7 and CANN 9.2.0 (a *planned* group in
-  `runtime.json`, not the current default).
-- `docker/Dockerfile` comments note that the CANN 9.1.0 (a5/Ascend 950) image
-  line uses torch-npu 2.10.0.post4; no runtime group declares that pairing
-  yet (the 9.1.0 entry currently declares 2.7.1.post8).
+1. Change the LLVM revision only in `cmake/llvm-hash.txt`; update actual
+   patches and their manifest together when necessary.
+2. Update the relevant toolchain/runtime metadata and explicit consumers.
+   Do not change another consumer implicitly by retargeting a global default.
+3. Run `python scripts/check_bom_consistency.py` and
+   `python -m pytest -q third_party/ascend/build_tests`.
+4. Ensure LLVM-dependent cache keys include **both** `cmake/llvm-hash.txt`
+   and actual patch contents, plus metadata and the recipe/platform inputs
+   appropriate to that cache. Runtime/README-only changes are not LLVM inputs.
 
-## Out of scope
-
-- The `Triton-distributed-ascend` submodule (pinned via git like all
-  submodules).
-- Release-line docker images under `docker/3.x.x-*/` (frozen per release).
+Catalog files belong to the same source checkout as their consumers. Release
+builds must not silently read a different branch's latest metadata. Track
+selection, NPU-IR locking and the full cross-branch rollout remain RFC work,
+not behavior claimed as implemented by these prototype PRs.
