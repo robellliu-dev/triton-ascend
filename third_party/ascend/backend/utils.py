@@ -31,6 +31,7 @@ import warnings
 from pathlib import Path
 import logging
 import platform
+from triton import knobs
 from triton.backends.ascend.backend_register import backend_strategy_registry
 
 import pybind11
@@ -182,7 +183,7 @@ _DEPRECATED_NPU_OPTION_DETAILS = {
     "it is ignored; this option has been moved into the first digit of simt_optimization_mode.",
     "storage_align": "it is ignored; the removed vendor compiler control has no replacement.",
     "stream": "it is ignored; launch streams are managed by the runtime and driver.",
-    "use_bytecode": "it is ignored; the bytecode pipeline is always enabled.",
+    "use_bytecode": "it is ignored; BishengIR compatible text is emitted directly.",
     "warp_size": "it is ignored; the Ascend backend fixes warp_size to 32.",
 }
 
@@ -304,9 +305,10 @@ def _warn_deprecated_ascend_env_vars() -> None:
 
 
 def is_compile_on_910_95(arch: str = None) -> bool:
-    """Return whether the compilation target belongs to the Ascend 950 generation."""
+    """Return whether the target uses the A5/A6 register-based pipeline."""
     if arch is not None:
-        return isinstance(arch, str) and arch.startswith(("Ascend910_95", "Ascend950"))
+        return isinstance(arch, str) and (arch.startswith(("Ascend910_96", "Ascend960")) or arch.startswith(
+            ("Ascend910_95", "Ascend950")))
 
     global _is_compile_on_910_95
     if _is_compile_on_910_95 is None:
@@ -314,7 +316,8 @@ def is_compile_on_910_95(arch: str = None) -> bool:
             import acl
             name_lower = acl.get_soc_name().lower()
             _is_compile_on_910_95 = ("ascend910_95" in name_lower or "ascend950" in name_lower
-                                     or "910_958b" in name_lower)
+                                     or "910_958b" in name_lower or "ascend910_96" in name_lower
+                                     or "ascend960" in name_lower)
         except (ImportError, AttributeError):
             _is_compile_on_910_95 = False
     return _is_compile_on_910_95
@@ -507,7 +510,7 @@ def _get_bishengir_opt_path() -> str:
     else:
         bishengir_opt_path = shutil.which("bishengir-opt")
         if bishengir_opt_path is None:
-            bishengir_opt_root = os.getenv("TRITON_NPU_COMPILER_PATH", "")
+            bishengir_opt_root = knobs.ascend.npu_compiler_path or ""
             if bishengir_opt_root is None:
                 raise EnvironmentError("Couldn't find executable bishengir-opt or TRITON_NPU_COMPILER_PATH")
             bishengir_opt_path = os.path.join(bishengir_opt_root, "bishengir-opt")
@@ -524,7 +527,7 @@ def _get_npucompiler_path() -> str:
     else:
         npu_compiler_path = shutil.which("bishengir-compile")
         if npu_compiler_path is None:
-            npu_compiler_root = os.getenv("TRITON_NPU_COMPILER_PATH", None)
+            npu_compiler_root = knobs.ascend.npu_compiler_path
             if npu_compiler_root is None:
                 raise EnvironmentError("Couldn't find executable bishengir-compile or TRITON_NPU_COMPILER_PATH.")
             npu_compiler_path = os.path.join(npu_compiler_root, "npuc")
@@ -534,7 +537,7 @@ def _get_npucompiler_path() -> str:
 def _get_bisheng_path() -> str:
     bisheng_path = shutil.which("bisheng")
     if bisheng_path is None:
-        npu_compiler_root = os.getenv("TRITON_NPU_COMPILER_PATH", None)
+        npu_compiler_root = knobs.ascend.npu_compiler_path
         if npu_compiler_root is None:
             raise EnvironmentError("Couldn't find executable bisheng or TRITON_NPU_COMPILER_PATH")
         bisheng_path = os.path.join(npu_compiler_root, "ccec")
@@ -608,7 +611,7 @@ def _get_ascend_path() -> Path:
 
 
 def _is_ascend_sanitizer_enabled() -> bool:
-    return os.getenv("TRITON_ENABLE_SANITIZER", "false").lower() in ("true", "1")
+    return knobs.ascend.enable_sanitizer
 
 
 def _is_debug_line_info_disabled() -> bool:
@@ -635,11 +638,11 @@ def _warn_auto_blockify_disabled(kernel_name: str, blacklist_reasons) -> None:
 
 
 def _enable_print_ub_bits() -> bool:
-    return os.getenv("ENABLE_PRINT_UB_BITS", "false").lower() in ("true", "1")
+    return knobs.ascend.print_ub_bits
 
 
 def _enable_dump_memory_info() -> bool:
-    return os.getenv("TRITON_MEMORY_DISPLAY", "false").lower() in ("true", "1")
+    return knobs.ascend.memory_display
 
 
 def _enable_msdebug() -> bool:
@@ -1045,6 +1048,8 @@ def ub_size_in_kbytes_for_arch(arch: str) -> int:
     """
     if not isinstance(arch, str) or not arch:
         return 0
+    if arch.startswith(("Ascend910_96", "Ascend960")):
+        return 376
     if arch.startswith(("Ascend910_95", "Ascend950")):
         return 256
     if arch.startswith(("Ascend910A", "Ascend910B", "Ascend910D", "Ascend910_93", "Ascend310B")):
