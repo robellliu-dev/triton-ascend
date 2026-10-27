@@ -154,10 +154,12 @@ jobs:
           echo "ERROR: cannot find or install python3"
           exit 1
         fi
-        # The CANN container ships python3 without the pip module, and the
-        # internal apt proxy can be unavailable. Bootstrap pip from the
-        # interpreter itself so the prerequisites step can still run.
-        python3 -m pip --version 2>/dev/null || python3 -m ensurepip --upgrade
+        # The container python3 can lack the pip module while apt is unusable
+        # (internal proxy down). Try to bootstrap pip from the interpreter
+        # itself; when even ensurepip is missing, keep the step green and let
+        # the prerequisites step surface the missing module.
+        python3 -m pip --version 2>/dev/null || python3 -m ensurepip --upgrade 2>/dev/null \
+          || echo "::warning::python3 has no pip module; prerequisites step will report details"
 
     - name: Install Prerequisites
       shell: bash
