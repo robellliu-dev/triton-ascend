@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -63,5 +64,5 @@ python3() {
     subprocess.run([bash, "-c", script], cwd=REPO,
                    env={**os.environ, "TEST_PYTHON": Path(sys.executable).as_posix(), "GITHUB_ENV":
                         output.as_posix()}, check=True, capture_output=True, text=True)
-    pin = (REPO / "cmake/llvm-hash.txt").read_text().strip()
+    pin = json.loads((REPO / "cmake/llvm-info.json").read_text())["llvm_hash"]
     assert f"llvm_commit_hash={pin}\n" in output.read_text()

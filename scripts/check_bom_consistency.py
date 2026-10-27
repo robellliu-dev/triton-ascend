@@ -1,6 +1,6 @@
 """Consistency checks between the dependency BOM and its consumers.
 
-The catalog indexes canonical cmake pins and Ascend-owned metadata. Checks
+The catalog indexes canonical cmake JSON pins and Ascend-owned metadata. Checks
 cover explicitly supported consumers, not full runtime profiles or arbitrary
 workflow expressions. See the catalog README for the current scope.
 
@@ -16,10 +16,10 @@ import runpy
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEPS_DIR = REPO_ROOT / "third_party" / "ascend" / "deps"
+DEPS_DIR = REPO_ROOT / "cmake"
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 
-# BOM schema revision understood by this checker; every deps/*.json must
+# BOM schema revision understood by this checker; each dependency JSON document must
 # declare exactly this version.
 SCHEMA_VERSION = 1
 
@@ -81,7 +81,7 @@ def _line_no(text, pos):
 
 
 def _load_llvm_info():
-    reader = runpy.run_path(str(REPO_ROOT / "third_party/ascend/build/llvm.py"))
+    reader = runpy.run_path(str(REPO_ROOT / "cmake/dependencies.py"))
     return reader["load_llvm_info"](REPO_ROOT)
 
 
@@ -93,33 +93,16 @@ def check_llvm_info():
 
 
 def check_toolchain():
-    toolchain = _load_json(DEPS_DIR / "toolchain.json")
-    if set(toolchain) != {"schema_version", "bisheng", "json_version_file"}:
-        _fail("toolchain", "expected schema_version, bisheng and json_version_file; do not copy the JSON version")
-        return
-    if toolchain["json_version_file"] != "cmake/json-version.txt":
-        _fail("toolchain", "json_version_file must reference cmake/json-version.txt")
-        return
-    version = _read(REPO_ROOT / "cmake/json-version.txt").strip()
-    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
-        _fail("toolchain", "cmake/json-version.txt must contain a release tag such as v3.11.3")
-    bisheng = toolchain["bisheng"]
-    if not isinstance(bisheng, dict) or set(bisheng) != {"x86_64", "aarch64"}:
-        _fail("toolchain", "bisheng must declare x86_64 and aarch64")
-        return
-    for arch, entry in bisheng.items():
-        if not isinstance(entry, dict) or set(entry) != {"file", "sha256"}:
-            _fail("toolchain", f"bisheng {arch} requires file and sha256")
-            continue
-        filename, checksum = entry["file"], entry["sha256"]
-        if not isinstance(filename, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.run", filename) is None:
-            _fail("toolchain", f"bisheng {arch} needs a safe .run basename")
-        if not isinstance(checksum, str) or re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
-            _fail("toolchain", f"bisheng {arch} needs a full SHA-256")
+    try:
+        reader = runpy.run_path(str(REPO_ROOT / "cmake/dependencies.py"))
+        reader["load_bisheng_info"](REPO_ROOT)
+        reader["load_json_info"](REPO_ROOT)
+    except (OSError, ValueError) as exc:
+        _fail("toolchain", str(exc))
 
 
 def check_schema_versions():
-    for name in ("llvm-info.json", "toolchain.json", "runtime.json"):
+    for name in ("llvm-info.json", "json-info.json", "bisheng-info.json", "ascend-runtime-info.json"):
         data = _load_json(DEPS_DIR / name)
         if data.get("schema_version") != SCHEMA_VERSION:
             _fail("schema",
@@ -231,7 +214,7 @@ def _glob_exists(relative):
     """Check a (possibly checkout-prefixed) hashFiles() argument against the repo.
 
     Some workflows check the PR out under a ``pr/`` directory, so arguments
-    like ``pr/cmake/llvm-hash.txt`` must match after stripping the prefix.
+    like ``pr/cmake/llvm-info.json`` must match after stripping the prefix.
     Only the declared :data:`CHECKOUT_ROOTS` prefixes may be stripped; an
     arbitrary leading component (a typo like ``wrng/requirements.txt``) must
     keep failing even when the remaining path exists.
@@ -350,7 +333,7 @@ def main():
     errors.clear()
     warnings.clear()
     try:
-        runtime = _load_json(DEPS_DIR / "runtime.json")
+        runtime = _load_json(DEPS_DIR / "ascend-runtime-info.json")
         if args.default_cann:
             if _runtime_groups(runtime):
                 print(runtime["default_cann"])
@@ -374,7 +357,7 @@ def main():
         for error in errors:
             print(f"  - {error}")
         raise SystemExit(1)
-    print("BOM consistency check passed (deps/ BOM, cmake mirrors, static pins, workflows, release policy).")
+    print("BOM consistency check passed (cmake dependency JSON, static pins, workflows, release policy).")
 
 
 if __name__ == "__main__":

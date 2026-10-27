@@ -11,8 +11,8 @@ on:
       - setup.py
       - pyproject.toml
       - version.txt
-      - cmake/llvm-hash.txt
-      - cmake/json-version.txt
+      - cmake/llvm-info.json
+      - cmake/json-info.json
   schedule:
     - cron: "0 8 * * *"
 
