@@ -26,5 +26,18 @@
       "torch": "2.10.0",
       "torch_npu": "2.10.0.post7"
     }
-  ]
+  ],
+  "consumers": {
+    "requirements.txt": "8.5.0"
+  },
+  "reconciliation": {
+    "release_policy.main": {
+      "cann": "9.0.0",
+      "documented_torch": "2.10.0",
+      "profile_torch": "2.7.1",
+      "owner": "runtime/release maintainers (review requested)",
+      "tracking": "https://github.com/triton-lang/triton-ascend/issues/2739",
+      "exit_condition": "Remove after owners reconcile this exact tuple; any tuple change must be reviewed."
+    }
+  }
 }

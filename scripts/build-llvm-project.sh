@@ -5,7 +5,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 LLVM_TARGETS=${LLVM_TARGETS:-Native;NVPTX;AMDGPU}
 LLVM_PROJECTS=${LLVM_PROJECTS:-mlir;llvm;lld}
 LLVM_BUILD_TYPE=${LLVM_BUILD_TYPE:-RelWithDebInfo}
-LLVM_COMMIT_HASH=${LLVM_COMMIT_HASH:-$(jq -r .llvm_hash "$REPO_ROOT/third_party/ascend/deps/llvm-info.json")}
+if [ -z "${LLVM_COMMIT_HASH:-}" ]; then
+    LLVM_COMMIT_HASH=$("${PYTHON:-python3}" "$REPO_ROOT/third_party/ascend/build/llvm.py" --hash) || exit 1
+fi
 LLVM_PROJECT_PATH=${LLVM_PROJECT_PATH:-"$REPO_ROOT/llvm-project"}
 LLVM_BUILD_PATH=${LLVM_BUILD_PATH:-"$LLVM_PROJECT_PATH/build"}
 LLVM_INSTALL_PATH=${LLVM_INSTALL_PATH:-"$LLVM_PROJECT_PATH/install"}
