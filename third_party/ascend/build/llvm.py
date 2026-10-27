@@ -31,9 +31,9 @@ def load_llvm_info(base_dir):
     if re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
         raise ValueError("cmake/llvm-hash.txt must contain exactly 40 hexadecimal characters")
     patches = info["patches"]
-    if (not isinstance(patches, list) or any(not isinstance(name, str) or not name.startswith("llvm_patch_")
-                                             or not name.endswith(".patch") or "/" in name or "\\" in name
-                                             for name in patches)):
+    if (not isinstance(patches, list)
+            or any(not isinstance(name, str) or re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", name) is None
+                   for name in patches)):
         raise ValueError("patches must list LLVM patch basenames")
     if patches != sorted(set(patches)):
         raise ValueError("patches must be unique and sorted to preserve the existing patch order")

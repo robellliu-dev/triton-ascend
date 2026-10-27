@@ -1,15 +1,13 @@
 """Consistency checks between the dependency BOM and its consumers.
 
-The single source of truth for pinned dependencies is ``third_party/ascend/deps/``
-(see ``third_party/ascend/deps/README.md``). This script verifies that every
-consumer -- the ``cmake/`` mirrors, ``requirements.txt``, ``docker/Dockerfile``
-build args, CI workflow literals and the release policy -- agrees with the
-BOM, so a version bump that forgets one of the copies fails loudly instead of
-silently desynchronizing.
+The catalog indexes canonical cmake pins and Ascend-owned metadata. Checks
+cover explicitly supported consumers, not full runtime profiles or arbitrary
+workflow expressions. See the catalog README for the current scope.
 
 Run locally:  python scripts/check_bom_consistency.py
 """
 
+import argparse
 import glob
 import json
 import os
@@ -30,16 +28,14 @@ SCHEMA_VERSION = 1
 # never an arbitrary leading path component.
 CHECKOUT_ROOTS = ("", "pr/")
 
-# Beta CANN builder images referenced by CI before the corresponding runtime
-# group is official enough to be listed in runtime.json. Per RFC #2739 §2 these
-# are narrow-scope exceptions with a removal condition, not a second source of
-# truth: each entry must be dropped when its consumer goes away or when a
-# matching runtime group lands in runtime.json (e.g. a 9.2.0 group with the
-# torch pins it actually ships with):
-#   - 9.0.0-beta.2 / 9.2.0-beta.1: build-docker-image.yml beta artifact matrix
-#   - 9.2.0-beta.2: manylinux builder image -- the manylinux ABI needs the
-#     preinstalled CANN; also pinned by npuir-build.yml
-BETA_CANN_WHITELIST = {"9.0.0-beta.2", "9.2.0-beta.1", "9.2.0-beta.2"}
+# File-scoped temporary builder exceptions. Runtime/release maintainer review
+# requested in RFC #2739; remove when the builder retires or gets a full profile.
+BETA_CANN_EXCEPTIONS = {
+    ".github/workflows/build-docker-image.yml": {"9.0.0-beta.2", "9.2.0-beta.1"},
+    ".github/workflows/wheels.yml": {"9.2.0-beta.2"},
+    ".github/workflows/npuir-build.yml": {"9.2.0-beta.2"},
+    ".github/workflows/build/wheels.Dockerfile": {"9.2.0-beta.2"},
+}
 
 # Guides that must not hardcode an LLVM checkout; they read
 # cmake/llvm-hash.txt dynamically instead. Any 40-hex `git checkout` literal
@@ -54,7 +50,7 @@ DOC_SITES = (
 
 # Matches container tags ("cann:9.0.0-a3-ubuntu22.04-py3.12"), install paths
 # ("cann-9.2.0-beta.2") and cache-key literals ("cann8.5.0").
-CANN_VERSION_RE = re.compile(r"cann[:-]?(\d+(?:\.\d+)*(?:-beta\.\d+)?)")
+CANN_VERSION_RE = re.compile(r"(?:cann|triton|manylinux)[:-]?(\d+(?:\.\d+)*(?:-beta\.\d+)?)")
 
 errors = []
 warnings = []
@@ -69,8 +65,21 @@ def _warn(check, message):
 
 
 def _load_json(path):
+
+    def unique_keys(pairs):
+        data = {}
+        for key, value in pairs:
+            if key in data:
+                raise ValueError(f"{path}: duplicate key {key}")
+            data[key] = value
+        return data
+
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f, object_pairs_hook=unique_keys)
+    if not isinstance(data, dict) or type(
+            data.get("schema_version")) is not int or data["schema_version"] != SCHEMA_VERSION:
+        raise ValueError(f"{path}: expected an object with integer schema_version {SCHEMA_VERSION}")
+    return data
 
 
 def _read(path):
@@ -96,9 +105,28 @@ def check_llvm_info():
 
 def check_toolchain():
     toolchain = _load_json(DEPS_DIR / "toolchain.json")
-    mirrored = _read(REPO_ROOT / "cmake" / "json-version.txt").strip()
-    if toolchain["json"] != mirrored:
-        _fail("toolchain", f"toolchain.json json={toolchain['json']} != cmake/json-version.txt={mirrored}")
+    if set(toolchain) != {"schema_version", "bisheng", "json_version_file"}:
+        _fail("toolchain", "expected schema_version, bisheng and json_version_file; do not copy the JSON version")
+        return
+    if toolchain["json_version_file"] != "cmake/json-version.txt":
+        _fail("toolchain", "json_version_file must reference cmake/json-version.txt")
+        return
+    version = _read(REPO_ROOT / "cmake/json-version.txt").strip()
+    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        _fail("toolchain", "cmake/json-version.txt must contain a release tag such as v3.11.3")
+    bisheng = toolchain["bisheng"]
+    if not isinstance(bisheng, dict) or set(bisheng) != {"x86_64", "aarch64"}:
+        _fail("toolchain", "bisheng must declare x86_64 and aarch64")
+        return
+    for arch, entry in bisheng.items():
+        if not isinstance(entry, dict) or set(entry) != {"file", "sha256"}:
+            _fail("toolchain", f"bisheng {arch} requires file and sha256")
+            continue
+        filename, checksum = entry["file"], entry["sha256"]
+        if not isinstance(filename, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.run", filename) is None:
+            _fail("toolchain", f"bisheng {arch} needs a safe .run basename")
+        if not isinstance(checksum, str) or re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
+            _fail("toolchain", f"bisheng {arch} needs a full SHA-256")
 
 
 def check_schema_versions():
@@ -110,19 +138,39 @@ def check_schema_versions():
 
 
 def _runtime_groups(runtime):
+    fields = {"schema_version", "default_cann", "runtimes", "consumers", "reconciliation"}
+    if not isinstance(runtime, dict) or set(runtime) != fields or not isinstance(runtime["runtimes"], list):
+        _fail("runtime-schema", "expected schema_version, default_cann, runtimes list, consumers and reconciliation")
+        return {}
+    if (not isinstance(runtime["consumers"], dict) or set(runtime["consumers"]) != {"requirements.txt"}
+            or not isinstance(runtime["reconciliation"], dict)):
+        _fail("runtime-schema", "invalid consumers or reconciliation object")
+        return {}
+    for name, item in runtime["reconciliation"].items():
+        required = {"cann", "documented_torch", "profile_torch", "owner", "tracking", "exit_condition"}
+        if (name != "release_policy.main" or not isinstance(item, dict) or set(item) != required
+                or any(not isinstance(value, str) or not value.strip() for value in item.values())):
+            _fail("runtime-schema", "invalid release_policy.main reconciliation record")
+            return {}
     groups = {}
-    for group in runtime.get("runtimes", []):
+    for group in runtime["runtimes"]:
+        if not isinstance(group, dict) or set(group) != {"cann", "torch", "torch_npu", "status"}:
+            _fail("runtime-schema", "each runtime needs cann, torch, torch_npu and status")
+            return {}
         cann = group.get("cann")
-        if not isinstance(cann, str) or cann in groups:
+        if not isinstance(cann, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", cann) is None or cann in groups:
             _fail("runtime-schema", f"invalid or duplicate CANN group: {cann!r}")
             return {}
         if any(not isinstance(group.get(key), str) or not group[key] for key in ("torch", "torch_npu", "status")):
             _fail("runtime-schema", f"CANN {cann} needs torch, torch_npu and status strings")
             return {}
+        if group["status"] not in {"main", "maintained", "early-access", "planned"}:
+            _fail("runtime-schema", f"unknown status for CANN {cann}")
+            return {}
         groups[cann] = group
     selected = [runtime.get("default_cann"), runtime.get("consumers", {}).get("requirements.txt")]
     for cann in selected:
-        if cann not in groups or groups[cann]["status"] == "planned":
+        if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] == "planned":
             _fail("runtime-schema", f"active consumer selects missing or planned CANN group: {cann!r}")
             return {}
     return groups
@@ -199,6 +247,8 @@ def _glob_exists(relative):
     arbitrary leading component (a typo like ``wrng/requirements.txt``) must
     keep failing even when the remaining path exists.
     """
+    if relative.startswith(("/", "\\")) or "\\" in relative or ":" in relative or ".." in relative.split("/"):
+        return False
     for root in CHECKOUT_ROOTS:
         if not relative.startswith(root):
             continue
@@ -212,7 +262,7 @@ def check_workflows(runtime):
     groups = _runtime_groups(runtime)
     if not groups:
         return
-    known_cann = {cann for cann, group in groups.items() if group["status"] != "planned"} | BETA_CANN_WHITELIST
+    declared_cann = {cann for cann, group in groups.items() if group["status"] != "planned"}
     list_re = re.compile(r"cann_version[\"']?\s*:\s*\[([^\]]*)\]")
     scalar_re = re.compile(r"cann_version[\"']?\s*:\s*[\"']?([\w.\-]+)")
     hash_files_re = re.compile(r"hashFiles\(([^)]*)\)")
@@ -220,13 +270,14 @@ def check_workflows(runtime):
     for path in _workflow_files():
         text = _read(path)
         rel = path.relative_to(REPO_ROOT).as_posix()
+        known_cann = declared_cann | BETA_CANN_EXCEPTIONS.get(rel, set())
 
         for match in CANN_VERSION_RE.finditer(text):
             version = match.group(1)
             if version not in known_cann:
                 _fail(
                     "workflows-cann", f"{rel}:{_line_no(text, match.start())} references CANN {version}, which is "
-                    f"not declared in runtime.json or the beta whitelist")
+                    f"not declared in runtime.json or an exception for this file")
 
         for line_no, line in enumerate(text.splitlines(), start=1):
             list_match = list_re.search(line)
@@ -331,14 +382,27 @@ def check_release_policy(runtime):
 
 
 def main():
-    check_schema_versions()
-    check_llvm_info()
-    check_toolchain()
-    check_docs_llvm_hash()
-    runtime = _load_json(DEPS_DIR / "runtime.json")
-    check_static_pins(runtime)
-    check_workflows(runtime)
-    check_release_policy(runtime)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--default-cann", action="store_true", help="validate and print the legacy container selection")
+    args = parser.parse_args()
+    errors.clear()
+    warnings.clear()
+    try:
+        runtime = _load_json(DEPS_DIR / "runtime.json")
+        if args.default_cann:
+            if _runtime_groups(runtime):
+                print(runtime["default_cann"])
+                return
+        else:
+            check_schema_versions()
+            check_llvm_info()
+            check_toolchain()
+            check_docs_llvm_hash()
+            check_static_pins(runtime)
+            check_workflows(runtime)
+            check_release_policy(runtime)
+    except (OSError, ValueError) as exc:
+        _fail("metadata", str(exc))
 
     if warnings:
         print("BOM consistency warnings (reported for reconciliation, not failing):")

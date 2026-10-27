@@ -14,6 +14,7 @@ on:
       - cmake/llvm-hash.txt
       - cmake/json-version.txt
       - third_party/ascend/deps/**
+      - scripts/check_bom_consistency.py
   schedule:
     - cron: "0 8 * * *"
 
@@ -31,9 +32,14 @@ jobs:
       cann: ${{ steps.deps.outputs.cann }}
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
       - name: Resolve pinned CANN version from the BOM
         id: deps
-        run: echo "cann=$(jq -r .default_cann third_party/ascend/deps/runtime.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          cann=$(python3 scripts/check_bom_consistency.py --default-cann)
+          echo "cann=$cann" >> "$GITHUB_OUTPUT"
 
   Build-Wheels:
     needs: deps
