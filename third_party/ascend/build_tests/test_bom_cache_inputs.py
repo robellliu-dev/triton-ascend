@@ -41,6 +41,11 @@ def test_compiler_cache_inputs_follow_the_canonical_pin_and_patch_bytes(workflow
         pin.write_text("b" * 40)
         assert fingerprint(tmp_path, patterns) != before, f"{workflow}: canonical pin missing from cache inputs"
 
+        json_pin = tmp_path / "cmake/json-version.txt"
+        before = fingerprint(tmp_path, patterns)
+        json_pin.write_text("v3.12.0\n")
+        assert fingerprint(tmp_path, patterns) != before, f"{workflow}: JSON version missing from cache inputs"
+
         patch = next((tmp_path / "third_party/ascend/patch").glob("llvm_patch_*.patch"))
         before = fingerprint(tmp_path, patterns)
         patch.write_bytes(patch.read_bytes() + b"\nchanged patch\n")
