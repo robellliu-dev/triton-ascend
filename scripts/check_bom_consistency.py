@@ -164,14 +164,14 @@ def _runtime_groups(runtime):
         if any(not isinstance(group.get(key), str) or not group[key] for key in ("torch", "torch_npu", "status")):
             _fail("runtime-schema", f"CANN {cann} needs torch, torch_npu and status strings")
             return {}
-        if group["status"] not in {"main", "maintained", "early-access", "planned"}:
+        if group["status"] not in {"main", "maintained", "early-access", "experimental", "planned"}:
             _fail("runtime-schema", f"unknown status for CANN {cann}")
             return {}
         groups[cann] = group
     selected = [runtime.get("default_cann"), runtime.get("consumers", {}).get("requirements.txt")]
     for cann in selected:
-        if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] == "planned":
-            _fail("runtime-schema", f"active consumer selects missing or planned CANN group: {cann!r}")
+        if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] in {"planned", "experimental"}:
+            _fail("runtime-schema", f"default consumer selects missing, planned or experimental CANN group: {cann!r}")
             return {}
     return groups
 
@@ -224,8 +224,8 @@ def check_static_pins(runtime):
                 f"expected {runtimes_by_cann[cann.group(1)]['torch_npu']})")
         if cann is not None and cann.group(1) in runtimes_by_cann:
             group = runtimes_by_cann[cann.group(1)]
-            if group["status"] == "planned":
-                _fail("static-pins", "docker/Dockerfile selects a planned runtime")
+            if group["status"] in {"planned", "experimental"}:
+                _fail("static-pins", "docker/Dockerfile selects a planned or experimental default runtime")
             torch_pin = re.search(r"(?m)^\s*torch==(\S+)", dockerfile)
             expected = group["torch"] + "+cpu"
             if torch_pin is None or torch_pin.group(1) != expected:
@@ -264,7 +264,7 @@ def check_workflows(runtime):
         return
     declared_cann = {cann for cann, group in groups.items() if group["status"] != "planned"}
     list_re = re.compile(r"cann_version[\"']?\s*:\s*\[([^\]]*)\]")
-    scalar_re = re.compile(r"cann_version[\"']?\s*:\s*[\"']?([\w.\-]+)")
+    scalar_re = re.compile(r"(?:cann_version|CANN_VERSION)[\"']?\s*:\s*[\"']?([\w.\-]+)")
     hash_files_re = re.compile(r"hashFiles\(([^)]*)\)")
 
     for path in _workflow_files():
