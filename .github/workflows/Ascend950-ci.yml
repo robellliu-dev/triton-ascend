@@ -80,7 +80,7 @@ jobs:
             ~/.triton/json
             ~/.triton/nvidia
             ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-wheels-${{ hashFiles('third_party/ascend/deps/llvm-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'third_party/ascend/deps/toolchain.json', 'cmake/nvidia-toolchain-version.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-wheels-${{ hashFiles('cmake/llvm-hash.txt', 'third_party/ascend/deps/llvm-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'third_party/ascend/deps/toolchain.json', 'cmake/nvidia-toolchain-version.json') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-wheels
 
       - name: Build triton-ascend wheel
