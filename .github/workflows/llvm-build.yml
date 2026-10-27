@@ -58,14 +58,18 @@ jobs:
       uses: actions/checkout@v5
 
     - name: Config mirrors & install build tools
-      if: matrix.config.target-os == 'ubuntu'
       shell: bash
       run: |
         sed -i 's|http://archive.ubuntu.com|http://cache-service.nginx-pypi-cache.svc.cluster.local:8081|g' /etc/apt/sources.list 2>/dev/null || true
         sed -i 's|http://ports.ubuntu.com|http://cache-service.nginx-pypi-cache.svc.cluster.local:8081|g' /etc/apt/sources.list 2>/dev/null || true
         sed -i 's|http://security.ubuntu.com|http://cache-service.nginx-pypi-cache.svc.cluster.local:8081|g' /etc/apt/sources.list 2>/dev/null || true
         apt-get update
-        apt-get install -y --no-install-recommends clang lld
+        # Every target runs in the Ubuntu CANN container, including AlmaLinux
+        # buildx targets. Bootstrap the metadata reader before resolving its pin.
+        apt-get install -y --no-install-recommends python3
+        if [ "${{ matrix.config.target-os }}" = 'ubuntu' ]; then
+          apt-get install -y --no-install-recommends clang lld
+        fi
 
     - name: Fetch LLVM Commit Hash
       shell: bash
