@@ -728,6 +728,17 @@ index d4872a463..86348211d 100644
          ir_filename = f"{file_name}.{ext}"
          if fn_override_manager is None:
              # Users can override kernels at scale by setting `ir_override` in autotune config
+@@ -331,8 +378,8 @@ def compile(src, target=None, options=None, _env_vars=None):
+         elif full_name := fn_override_manager.get_file(ir_filename):
+             print(f"\nOverriding kernel with file {full_name}")
+             next_module = parse(full_name, ext, context)
+-        # If TRITON_STORE_BINARY_ONLY is 1, only store cubin/hsaco/json
+-        if (not store_only_binary) or (ext in ("cubin", "hsaco", "json")):
++        # If TRITON_STORE_BINARY_ONLY is 1, only store the final binary.
++        if (not store_only_binary) or (ext in (backend.binary_ext, "json")):
+             metadata_group[ir_filename] = fn_cache_manager.put(next_module, ir_filename)
+         if fn_dump_manager is not None:
+             fn_dump_manager.put(next_module, ir_filename)
 @@ -354,8 +401,8 @@ def compile(src, target=None, options=None, _env_vars=None):
  
      # notify any listener
@@ -851,6 +862,19 @@ index 39e6c4dfb..c72ca65c2 100644
 +
 +    def format_line_delim(self, keyword):
 +        return f"///------------------{keyword}------------------\n"
+diff --git a/python/triton/extension/buffer/src/buffer_ir.cc b/python/triton/extension/buffer/src/buffer_ir.cc
+index 9ff1e4df9..7e2a4cdff 100644
+--- a/python/triton/extension/buffer/src/buffer_ir.cc
++++ b/python/triton/extension/buffer/src/buffer_ir.cc
+@@ -78,7 +78,7 @@ void init_buffer_ir(py::module &&m) {
+              // TODO: We need to add a pass before OneShotBufferize to generate
+              // MemorySpaceCastOp
+              Operation *memref =
+-                 self.create<bufferization::ToBufferOp>(memrefType, src);
++                 self.create<bufferization::ToMemrefOp>(memrefType, src);
+              if (addressSpace) {
+                memref = self.create<memref::MemorySpaceCastOp>(
+                    MemRefType::get(memrefType.getShape(),
 diff --git a/python/triton/language/math.py b/python/triton/language/math.py
 index 582cd876c..034fe0f87 100644
 --- a/python/triton/language/math.py

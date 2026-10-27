@@ -239,6 +239,7 @@
   "manylinux",
   "NVTX",
   "CUPTI",
+  "Volcengine",
   "shmem",
   "SHMEM",
   "msdebug",
@@ -253,5 +254,9 @@
   "Szczerbuk",
   "Raoux",
   "Zahi",
+  "mbarriers",
+  "TMEM",
+  "TTGIR",
+  "mbarrier",
   "Moudallal"
 ]
