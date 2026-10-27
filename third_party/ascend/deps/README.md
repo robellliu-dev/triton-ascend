@@ -2,8 +2,8 @@
 
 This directory indexes Ascend-owned dependency metadata. It is not an artifact
 SBOM or proof that a runtime combination has passed hardware validation.
-The current PR is a migration prototype; the full profile/track model in RFC
-#2739 is not implemented here.
+The current PR is a migration prototype; the full profile/track model in
+RFC #2739 is not implemented here.
 
 ## LLVM: one revision pin, separate metadata
 
