@@ -185,7 +185,10 @@ class Package:
 
 # json
 def get_json_package_info():
-    url = "https://github.com/nlohmann/json/releases/download/v3.11.3/include.zip"
+    version = (Path(get_base_dir()) / "cmake" / "json-version.txt").read_text(encoding="utf-8").strip()
+    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        raise ValueError("cmake/json-version.txt must contain a release tag such as v3.11.3")
+    url = f"https://github.com/nlohmann/json/releases/download/{version}/include.zip"
     return Package("json", "", url, "JSON_INCLUDE_DIR", "", "JSON_SYSPATH")
 
 
