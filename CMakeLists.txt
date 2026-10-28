@@ -48,8 +48,6 @@ endif()
 # Ensure Python3 vars are set correctly
 # used conditionally in this file and by lit tests
 
-include(TritonDependencies)
-
 # Customized release build type with assertions: TritonRelBuildWithAsserts
 if(NOT MSVC)
   set(CMAKE_C_FLAGS_TRITONRELBUILDWITHASSERTS "-O2 -g")
