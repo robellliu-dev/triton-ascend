@@ -97,9 +97,10 @@ cache paths, not complete SoC/OS/Python/ABI tuples or release refs.
 | NPU-IR and Triton-Distributed | Their source settings now live in their respective cmake JSON files. NPU-IR still resolves a watch branch, with explicit environment overrides preserved. Triton-Distributed checks out and verifies its exact revision even when preparing an sdist outside a Git checkout. |
 | CI fixtures and infrastructure | Mojo's source SHA and pytest/einops pins are intentional test inputs. Workflow IDs, registries, image tags and download origins have separate roles; they are not all compiler dependency pins. |
 
-The English installation translation catalog is synchronized with the current
-source block and its local JSON/patch reads. Rendered-doc validation remains
-separate from checking the installation sources and catalog text.
+Upstream reverted the legacy PO translation mechanism in 87cd8f424 and restored
+direct English-source builds. Do not restore those catalogs; both installation
+source documents retain their local JSON/patch reads. Rendered-doc validation
+remains separate from checking the installation sources.
 
 ## Updating dependencies
 
