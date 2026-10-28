@@ -43,9 +43,10 @@ jobs:
           python-version: '3.10'
       - name: Resolve pinned CANN version from the BOM
         id: deps
+        shell: python
         run: |
-          cann=$(python3 - <<'PY'
           import json
+          import os
           import re
           with open("cmake/ascend-runtime-info.json") as stream:
               runtime = json.load(stream)
@@ -55,10 +56,8 @@ jobs:
           groups = [group for group in runtime["runtimes"] if group["cann"] == cann]
           if len(groups) != 1 or groups[0]["status"] not in {"main", "maintained", "early-access"}:
               raise SystemExit("Default CANN must select exactly one active runtime")
-          print(cann)
-          PY
-          )
-          echo "cann=$cann" >> "$GITHUB_OUTPUT"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print(f"cann={cann}", file=output)
 
   build:
     needs: deps

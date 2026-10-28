@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -14,7 +15,7 @@ REPO = Path(__file__).resolve().parents[3]
 @pytest.mark.parametrize("selection", ["9.0.0", "missing", "9.2.0", None, [], "duplicate"])
 def test_real_workflow_reader_rejects_unusable_defaults(workflow, selection, tmp_path):
     text = (REPO / ".github/workflows" / workflow).read_text(encoding="utf-8")
-    match = re.search(r"cann=\$\(python3 - <<'PY'\n(.*?)\n[ ]*PY\n", text, re.S)
+    match = re.search(r"(?m)^        shell: python\n        run: \|\n((?:          .*\n|\n)+)", text)
     assert match is not None
     script = textwrap.dedent(match.group(1))
     metadata = tmp_path / "cmake"
@@ -25,6 +26,12 @@ def test_real_workflow_reader_rejects_unusable_defaults(workflow, selection, tmp
     else:
         data["default_cann"] = selection
     (metadata / "ascend-runtime-info.json").write_text(json.dumps(data))
-    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    output = tmp_path / "github-output"
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
+                            env={**os.environ, "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
     assert result.returncode == (0 if selection == "9.0.0" else 1), result.stderr
-    assert result.stdout == ("9.0.0\n" if selection == "9.0.0" else "")
+    assert result.stdout == ""
+    if selection == "9.0.0":
+        assert output.read_text() == "cann=9.0.0\n"
+    else:
+        assert not output.exists()
