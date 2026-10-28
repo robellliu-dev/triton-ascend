@@ -1,26 +1,24 @@
 import importlib.util
 import json
-import shutil
 from pathlib import Path
-import subprocess
-import sys
-from types import ModuleType
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
-BUILD = REPO / "third_party" / "ascend" / "build"
 
 
 @pytest.fixture
 def load_info(monkeypatch):
-    package = ModuleType("ascend_llvm_test")
-    package.__path__ = [str(BUILD)]
-    monkeypatch.setitem(sys.modules, package.__name__, package)
-    spec = importlib.util.spec_from_file_location(f"{package.__name__}.setup_patch", BUILD / "setup_patch.py")
+    spec = importlib.util.spec_from_file_location("llvm_metadata_checker", REPO / "scripts/check_bom_consistency.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module._load_llvm_bom
+
+    def load(root):
+        monkeypatch.setattr(module, "REPO_ROOT", root)
+        monkeypatch.setattr(module, "DEPS_DIR", root / "cmake")
+        return module._load_llvm_info()
+
+    return load
 
 
 @pytest.fixture
@@ -28,7 +26,6 @@ def inputs(tmp_path):
     metadata = tmp_path / "cmake" / "llvm-info.json"
     metadata.parent.mkdir(parents=True)
     metadata.write_bytes((REPO / "cmake/llvm-info.json").read_bytes())
-    shutil.copyfile(REPO / "cmake/dependencies.py", tmp_path / "cmake/dependencies.py")
     data = json.loads(metadata.read_text())
     data["llvm_hash"] = "a" * 40
     metadata.write_text(json.dumps(data))
@@ -88,12 +85,3 @@ def test_duplicate_json_keys_are_rejected(load_info, inputs):
     metadata.write_text('{"schema_version": 1, "schema_version": 1}')
     with pytest.raises(ValueError, match="duplicate"):
         load_info(root)
-
-
-def test_cli_reports_the_same_pin_and_real_patch_paths():
-    helper = REPO / "cmake/dependencies.py"
-    pin = subprocess.run([sys.executable, str(helper), "--hash"], capture_output=True, text=True, check=True)
-    assert pin.stdout.strip() == json.loads((REPO / "cmake/llvm-info.json").read_text())["llvm_hash"]
-    patches = subprocess.run([sys.executable, str(helper), "--patches"], capture_output=True, text=True, check=True)
-    assert patches.stdout.splitlines()
-    assert all(Path(path).is_file() for path in patches.stdout.splitlines())

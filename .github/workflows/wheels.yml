@@ -9,10 +9,11 @@ on:
       - .github/workflows/wheels.yml
       - .github/workflows/build/wheels.Dockerfile
       - setup.py
+      - python/build_helpers.py
       - pyproject.toml
       - version.txt
       - cmake/llvm-info.json
-      - cmake/json-info.json
+      - cmake/json-version.txt
   schedule:
     - cron: "0 8 * * *"
 

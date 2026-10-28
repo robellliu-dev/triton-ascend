@@ -114,21 +114,17 @@ def test_json_loader_rejects_bad_envelopes(checker, contents):
 
 
 @pytest.mark.parametrize("selection", ["9.0.0", "missing", "9.2.0", None, []])
-def test_resolver_emits_only_a_valid_active_default(checker, monkeypatch, capsys, selection):
-    import sys
+def test_audit_accepts_only_a_valid_active_default(checker, selection):
     path = checker.DEPS_DIR / "ascend-runtime-info.json"
     data = json.loads(path.read_text())
     data["default_cann"] = selection
     path.write_text(json.dumps(data))
-    monkeypatch.setattr(sys, "argv", ["checker", "--default-cann"])
     if selection == "9.0.0":
-        checker.main()
-        assert capsys.readouterr().out == "9.0.0\n"
+        assert checker._runtime_groups(data)
+        assert not checker.errors
     else:
-        with pytest.raises(SystemExit) as exc:
-            checker.main()
-        assert exc.value.code == 1
-        assert "BOM consistency check FAILED" in capsys.readouterr().out
+        assert not checker._runtime_groups(data)
+        assert checker.errors
 
 
 def test_beta_exception_does_not_allow_an_unrelated_container(checker, monkeypatch):

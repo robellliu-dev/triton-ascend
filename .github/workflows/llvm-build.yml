@@ -5,14 +5,14 @@ on:
     paths:
       - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - cmake/dependencies.py
+      - python/build_helpers.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   pull_request:
     paths:
       - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - cmake/dependencies.py
+      - python/build_helpers.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
       shell: bash
       run: |
         command -v python3 >/dev/null || { echo "Python 3 is required to resolve LLVM metadata" >&2; exit 1; }
-        LLVM_COMMIT_HASH="$(python3 cmake/dependencies.py --hash)"
+        LLVM_COMMIT_HASH="$(python3 -c 'import json; print(json.load(open("cmake/llvm-info.json"))["llvm_hash"])')"
         echo "Found LLVM commit hash: ${LLVM_COMMIT_HASH}"
         echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
 
