@@ -30,6 +30,8 @@ try:
 except ImportError:
     from wheel.bdist_wheel import bdist_wheel
 
+from python.build_helpers import check_env_flag, get_llvm_system_suffix, is_linux_os
+
 from .build_npuir import build_npuir
 
 _THIS_DIR = Path(__file__).resolve().parent
@@ -50,13 +52,6 @@ def _set_default_env_vars():
 
 def _is_git_repo():
     return (_REPO_ROOT / ".git").is_dir()
-
-
-def _is_linux_os(os_id):
-    if os.path.exists("/etc/os-release"):
-        with open("/etc/os-release", "r") as f:
-            return f'ID="{os_id}"' in f.read()
-    return False
 
 
 def _get_llvm_patch_hash():
@@ -82,37 +77,14 @@ def _load_llvm_bom(base_dir):
 
 
 def _get_ascend_llvm_package_info(base_dir):
-    system = platform.system()
-    try:
-        arch = {"x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
-    except KeyError:
-        arch = platform.machine()
-
-    env_system_suffix = os.environ.get("TRITON_LLVM_SYSTEM_SUFFIX")
-    if env_system_suffix:
-        system_suffix = env_system_suffix
-    elif system == "Darwin":
-        system_suffix = f"macos-{arch}"
-    elif system == "Linux":
-        if arch == "arm64" and _is_linux_os("almalinux"):
-            system_suffix = "almalinux-arm64"
-        elif arch == "arm64":
-            system_suffix = "ubuntu-arm64"
-        elif arch == "x64":
-            # AlmaLinux (manylinux) images always take the almalinux build,
-            # which is compiled against glibc 2.28 and therefore runs on any
-            # >= 2.28 image. The glibc-version heuristic below picked
-            # ubuntu-x64 on manylinux_2_34 (glibc 2.34 > 2.28), whose
-            # Ubuntu 22.04 binaries need glibc 2.35 and fail to run there.
-            if _is_linux_os("almalinux"):
-                system_suffix = "almalinux-x64"
-            else:
-                vglibc = tuple(map(int, platform.libc_ver()[1].split(".")))
-                vglibc = vglibc[0] * 100 + vglibc[1]
-                system_suffix = "ubuntu-x64" if vglibc > 228 else "almalinux-x64"
-        else:
-            return None
+    # Ascend manylinux must use the AlmaLinux artifact even with glibc > 2.28;
+    # the common upstream heuristic would select an Ubuntu artifact there.
+    if (not os.getenv("TRITON_LLVM_SYSTEM_SUFFIX") and platform.system() == "Linux" and platform.machine() == "x86_64"
+            and is_linux_os("almalinux")):
+        system_suffix = "almalinux-x64"
     else:
+        system_suffix = get_llvm_system_suffix()
+    if system_suffix is None:
         return None
 
     llvm_info = _load_llvm_bom(base_dir)
@@ -141,7 +113,7 @@ def checkout_file(files):
 
 
 def _is_dev_mode():
-    if os.getenv("IS_MANYLINUX", "FALSE").upper() not in ["ON", "1", "YES", "TRUE", "Y"]:
+    if not check_env_flag("IS_MANYLINUX", "FALSE"):
         return True
     if os.environ.get("TRITON_WHEEL_VERSION_SUFFIX", ""):
         return True
@@ -325,7 +297,7 @@ def _git_check_call_with_retry(cmd, cwd=None, retries=3, interval=5):
 
 
 def _npuir_build_enabled():
-    return os.getenv("TRITON_BUILD_NPUIR", "OFF").upper() in ["ON", "1", "YES", "TRUE", "Y"]
+    return check_env_flag("TRITON_BUILD_NPUIR", "OFF")
 
 
 def _ensure_npuir_payload():
@@ -360,7 +332,7 @@ def _ensure_npuir_sources():
 
 
 def _ensure_distributed_submodule():
-    if os.getenv("TRITON_BUILD_TD", "OFF").upper() not in ["ON", "1", "YES", "TRUE", "Y"]:
+    if not check_env_flag("TRITON_BUILD_TD", "OFF"):
         return
     distributed_dir = _REPO_ROOT / "third_party" / "ascend" / "Triton-distributed-ascend"
     commit_id = "82b8c919bc4f82e733e15ded7ea259aa089c9e6a"
