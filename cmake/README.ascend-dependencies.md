@@ -1,8 +1,9 @@
 # Build dependency pins in cmake
 
 Keep the existing upstream layout: LLVM metadata is JSON, while the
-nlohmann-json version stays in `json-version.txt`. One dependency has one
-authoritative pin; using a single file format is not required.
+nlohmann-json version stays in `json-version.txt`. For the migrated source-build
+consumers below, each dependency has one authoritative pin; using a single file
+format is not required. This does not cover every release-image recipe.
 
 | File | Authority and consumers |
 | --- | --- |
@@ -59,7 +60,11 @@ would not establish integrity. These remain follow-up work in RFC 2739.
 Requirements keep their explicit 8.5.0 group; Docker defaults are checked against
 their own CANN, torch-npu and CPU torch tuple. Missing, duplicate, experimental
 or planned default selections fail. The observed 9.2.0 nightly group remains
-experimental and unverified. Beta builder exceptions are file-scoped.
+experimental in this prototype's default-selection policy. That label does not
+replace the project's published support matrix in the release notes. Beta
+builder exceptions are file-scoped. Requirements and Docker runtime pins remain
+literal values checked against their selected group; they are not generated
+from this metadata.
 Only the recorded CANN9.0.0/documented-torch2.10.0/profile-torch2.7.1 conflict
 is a warning with tracking, requested owner and exit information. Other drift
 fails; this record does not resolve the conflict or certify support.
@@ -68,6 +73,27 @@ This prototype does not implement full chip/arch/Python/track profiles,
 release-ref resolution, NPU-IR locking, artifact integrity or compatibility
 certification. Requirements, release version files and plugin names retain their
 existing packaging roles.
+
+## Hardcoded inputs outside the migrated path
+
+The checker passing does not establish that all dependency literals have been
+removed. Its document checks cover four installation sources; its release-policy
+check covers only the main row's CANN and PyTorch columns, not LLVM, patches or
+the separate release-note matrices. Workflow checks cover CANN declarations and
+cache paths, not complete SoC/OS/Python/ABI tuples or release refs.
+
+| Remaining input | Boundary and follow-up |
+| --- | --- |
+| `docker/triton_ascend-cann-torch_npu.Dockerfile` | Installs a versioned release wheel and separately builds LLVM from its literal `LLVM_COMMIT=b5cc222d7429fe6f18c787f633d5262fac2e676f`. This is an active input, not an unused argument. Bind the selected wheel release to its source/LLVM/patch set before migrating it; reading main's pin would not establish release compatibility. |
+| `release-docker-images-nightly.yml` | References the absent `docker/cann9.2.0_npu.Dockerfile`. Merely selecting the existing generic recipe would still leave the preceding LLVM selection unresolved. |
+| Historical release Dockerfiles | Eighteen 3.2.1/3.2.2 recipes retain their LLVM commit. Preserve frozen release inputs rather than rewriting them to main's LLVM. |
+| NPU-IR and Triton-Distributed | NPU-IR resolves the moving `stable` branch. Triton-Distributed uses a literal SHA in `setup_patch.py`, not a tracked gitlink. Neither is migrated to these metadata files. |
+| CI fixtures and infrastructure | Mojo's source SHA and pytest/einops pins are intentional test inputs. Workflow IDs, registries, image tags and download origins have separate roles; they are not all compiler dependency pins. |
+
+The English installation translation catalog also retains an older command
+snippet. A text match alone does not prove that Sphinx selects it for the current
+source block; catalog synchronization and rendered-doc validation remain separate
+from checking the four installation sources.
 
 ## Updating dependencies
 
