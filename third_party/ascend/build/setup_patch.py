@@ -18,7 +18,7 @@ All Ascend-specific behavior stays isolated under ``third_party/ascend/build``;
 import glob
 import os
 import platform
-import runpy
+import json
 import shutil
 import subprocess
 import sys
@@ -75,12 +75,6 @@ def _get_llvm_patch_hash():
     return h.hexdigest()[:8]
 
 
-def _load_llvm_bom(base_dir):
-    """Read the canonical LLVM JSON and Ascend patch manifest."""
-    reader = runpy.run_path(str(Path(base_dir) / "cmake/dependencies.py"))
-    return reader["load_llvm_info"](base_dir)
-
-
 def _get_ascend_llvm_package_info(base_dir):
     system = platform.system()
     try:
@@ -115,7 +109,8 @@ def _get_ascend_llvm_package_info(base_dir):
     else:
         return None
 
-    llvm_info = _load_llvm_bom(base_dir)
+    with open(Path(base_dir) / "cmake/llvm-info.json", encoding="utf-8") as llvm_info_file:
+        llvm_info = json.load(llvm_info_file)
     rev = llvm_info["llvm_hash"][:8]
     patch_hash = _get_llvm_patch_hash()
     name = f"llvm-{rev}-{patch_hash}-{system_suffix}"

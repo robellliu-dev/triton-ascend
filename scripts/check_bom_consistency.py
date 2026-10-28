@@ -7,12 +7,10 @@ workflow expressions. See the catalog README for the current scope.
 Run locally:  python scripts/check_bom_consistency.py
 """
 
-import argparse
 import glob
 import json
 import os
 import re
-import runpy
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -92,8 +90,25 @@ def _line_no(text, pos):
 
 
 def _load_llvm_info():
-    reader = runpy.run_path(str(REPO_ROOT / "cmake/dependencies.py"))
-    return reader["load_llvm_info"](REPO_ROOT)
+    root = REPO_ROOT
+    info = _load_json(DEPS_DIR / "llvm-info.json")
+    if set(info) != {"schema_version", "llvm_hash", "patches"}:
+        raise ValueError("llvm-info.json requires schema_version, llvm_hash and patches")
+    revision = info["llvm_hash"]
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
+        raise ValueError("llvm_hash must contain exactly 40 hexadecimal characters")
+    patches = info["patches"]
+    if (not isinstance(patches, list)
+            or any(not isinstance(name, str) or re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", name) is None
+                   for name in patches)):
+        raise ValueError("patches must list LLVM patch basenames")
+    if patches != sorted(set(patches)):
+        raise ValueError("patches must be unique and sorted to preserve the existing patch order")
+    patch_dir = root / "third_party/ascend/patch"
+    actual = sorted(path.name for path in patch_dir.glob("llvm_patch_*.patch") if path.is_file())
+    if patches != actual:
+        raise ValueError(f"LLVM patch manifest mismatch: declared {patches}, found {actual}")
+    return info
 
 
 def check_llvm_info():
@@ -103,17 +118,36 @@ def check_llvm_info():
         _fail("llvm-info", str(exc))
 
 
+def _load_bisheng_info():
+    info = _load_json(DEPS_DIR / "bisheng-info.json")
+    if set(info) != {"schema_version", "bisheng"}:
+        raise ValueError("bisheng-info.json requires schema_version and bisheng")
+    bisheng = info["bisheng"]
+    if not isinstance(bisheng, dict) or set(bisheng) != {"x86_64", "aarch64"}:
+        raise ValueError("bisheng must declare x86_64 and aarch64")
+    for arch, entry in bisheng.items():
+        if not isinstance(entry, dict) or set(entry) != {"file", "sha256"}:
+            raise ValueError(f"bisheng {arch} requires file and sha256")
+        filename, checksum = entry["file"], entry["sha256"]
+        if not isinstance(filename, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.run", filename) is None:
+            raise ValueError(f"bisheng {arch} needs a safe .run basename")
+        if not isinstance(checksum, str) or re.fullmatch(r"[0-9a-fA-F]{64}", checksum) is None:
+            raise ValueError(f"bisheng {arch} needs a full SHA-256")
+    return info
+
+
 def check_toolchain():
     try:
-        reader = runpy.run_path(str(REPO_ROOT / "cmake/dependencies.py"))
-        reader["load_bisheng_info"](REPO_ROOT)
-        reader["load_json_info"](REPO_ROOT)
+        _load_bisheng_info()
+        version = _read(DEPS_DIR / "json-version.txt").strip()
+        if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+            raise ValueError("json-version.txt must contain a release tag such as v3.11.3")
     except (OSError, ValueError) as exc:
         _fail("toolchain", str(exc))
 
 
 def check_schema_versions():
-    for name in ("llvm-info.json", "json-info.json", "bisheng-info.json", "ascend-runtime-info.json"):
+    for name in ("llvm-info.json", "bisheng-info.json", "ascend-runtime-info.json"):
         data = _load_json(DEPS_DIR / name)
         if data.get("schema_version") != SCHEMA_VERSION:
             _fail("schema",
@@ -360,25 +394,17 @@ def check_release_policy(runtime):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--default-cann", action="store_true", help="validate and print the legacy container selection")
-    args = parser.parse_args()
     errors.clear()
     warnings.clear()
     try:
         runtime = _load_json(DEPS_DIR / "ascend-runtime-info.json")
-        if args.default_cann:
-            if _runtime_groups(runtime):
-                print(runtime["default_cann"])
-                return
-        else:
-            check_schema_versions()
-            check_llvm_info()
-            check_toolchain()
-            check_docs_llvm_hash()
-            check_static_pins(runtime)
-            check_workflows(runtime)
-            check_release_policy(runtime)
+        check_schema_versions()
+        check_llvm_info()
+        check_toolchain()
+        check_docs_llvm_hash()
+        check_static_pins(runtime)
+        check_workflows(runtime)
+        check_release_policy(runtime)
     except (OSError, ValueError) as exc:
         _fail("metadata", str(exc))
 

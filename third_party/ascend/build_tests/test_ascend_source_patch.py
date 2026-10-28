@@ -5,7 +5,7 @@ import subprocess
 REPO = Path(__file__).resolve().parents[3]
 
 
-def test_dependency_cmake_include_preserves_the_actual_ascend_source_patch(tmp_path):
+def test_build_changes_preserve_the_actual_ascend_source_patch(tmp_path):
     version = (REPO / "version.txt").read_text().strip().split(".post", 1)[0]
     patch = REPO / f"third_party/ascend/patch/triton-ascend-{version}.patch"
     for line in patch.read_text(encoding="utf-8").splitlines():
@@ -25,5 +25,4 @@ def test_dependency_cmake_include_preserves_the_actual_ascend_source_patch(tmp_p
         ["git", "-c", "core.autocrlf=false", "apply", str(local_patch)], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     cmake = (tmp_path / "CMakeLists.txt").read_text()
-    assert "include(TritonDependencies)" in cmake
     assert "safe_compile.cmake" in cmake

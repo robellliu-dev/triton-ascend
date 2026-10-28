@@ -63,8 +63,18 @@ pip install -e . --extra-index-url=https://repo.huaweicloud.com/repository/pypi/
     ```bash
     # 在当前 triton-ascend 仓库根目录执行；使用唯一 LLVM pin 和本地补丁清单。
     TRITON_ROOT="$(pwd)"
-    LLVM_COMMIT=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --hash) || exit 1
-    LLVM_PATCHES=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --patches) || exit 1
+    LLVM_COMMIT=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["llvm_hash"])' "$TRITON_ROOT/cmake/llvm-info.json") || exit 1
+    LLVM_PATCHES=$(python3 - "$TRITON_ROOT" <<'PY'
+    import json
+    import sys
+    from pathlib import Path
+    root = Path(sys.argv[1])
+    with open(root / "cmake/llvm-info.json") as stream:
+        info = json.load(stream)
+    for name in info["patches"]:
+        print(root / "third_party/ascend/patch" / name)
+    PY
+    ) || exit 1
 
     git clone --no-checkout https://github.com/llvm/llvm-project.git
     cd llvm-project

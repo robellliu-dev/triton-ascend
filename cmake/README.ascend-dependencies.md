@@ -1,84 +1,87 @@
-# Dependency JSON in cmake
+# Build dependency pins in cmake
 
-Following Intel's `cmake/llvm-info.json` layout and `llvm_hash` field, this
-prototype puts dependency pins directly in JSON in the existing cmake directory.
-The old Ascend deps directory and LLVM/JSON/Bisheng text pin files are removed.
-There are no generated text mirrors, path-reference pins or silent text fallbacks.
+Keep the existing upstream layout: LLVM metadata is JSON, while the
+nlohmann-json version stays in `json-version.txt`. One dependency has one
+authoritative pin; using a single file format is not required.
 
 | File | Authority and consumers |
 | --- | --- |
-| `llvm-info.json` | Full LLVM commit plus the exact sorted Ascend patch manifest. Python packaging, shell, LLVM CI, CMake and installation examples consume it. |
-| `json-info.json` | nlohmann-json release tag. Python constructs the real download URL from it; CMake reads the same tag. |
-| `bisheng-info.json` | Bisheng run files and SHA-256 per supported architecture. CI installation steps read and verify these inputs. |
-| `ascend-runtime-info.json` | Observed CANN groups, explicit requirements binding and the exact existing release-policy reconciliation. It is an interim constraint, not full environment profiles. |
-| `dependencies.py` | Standard-library-only reader and CLI shared by Python packaging, shell, CI and container validation. It does not import Triton or setuptools and does not access the network. |
-| `TritonDependencies.cmake` | Native CMake `file(READ)` / `string(JSON)` reader, included by the root project. It records configure dependencies and source provenance; installed LLVM discovery still uses MLIR/LLVMConfig and explicit user paths. |
+| `llvm-info.json` | Full LLVM commit and the sorted Ascend patch manifest. Packaging, the LLVM source-build workflow and installation examples read the same checkout. |
+| `json-version.txt` | nlohmann-json release tag, read directly by `get_json_package_info()` in `python/build_helpers.py`, following upstream and Intel. No JSON mirror. |
+| `bisheng-info.json` | Bisheng installer filenames and SHA-256 per architecture. CI installation steps read and verify these inputs. |
+| `ascend-runtime-info.json` | Observed CANN groups, explicit requirements binding and the exact release-policy reconciliation. This is not a complete environment profile. |
 
-```json
-{
-  "schema_version": 1,
-  "llvm_hash": "f6ded0be897e2878612dd903f7e8bb85448269e5",
-  "patches": ["llvm_patch_f6ded0b.patch"]
-}
-```
+## Reading versus checking
 
-The LLVM pin is stored only in this JSON. Patch names come from the manifest,
-never a SHA prefix: the current patch filename uses seven characters, while
-the existing package name uses eight. Patch-content hashing, artifact names
-and download identity checks remain unchanged. Intel also maintains artifact
-build numbers/checksums; copying those fields without a producer/consumer
-integrity implementation would be misleading, so that remains RFC 2739 P3.
-Intel still uses a JSON-library text pin; migrating it to `json-info.json` is
-an explicit extension of its layout for this repository.
+Common packaging helpers live in the existing `python/build_helpers.py`:
+`Package`, `check_env_flag()`, `get_json_package_info()` and
+`get_llvm_package_info()`. They use the standard library without importing
+Triton, setuptools or Ascend preparation hooks. `setup.py` imports these helpers;
+Ascend-specific LLVM URLs, patch-content hashes and platform overrides stay in
+`third_party/ascend/build/setup_patch.py`.
 
-Run from any working directory with the source checkout path:
+JSON-library download URLs follow `json-version.txt` with `read().strip()`.
+LLVM download identities read `llvm_hash` with `json.load()`. No generic reader,
+dynamic `runpy` loader, generated pin mirrors or cross-branch fallback is needed.
+Shell and YAML use Python's JSON parser directly. Installation examples also
+read the explicit patch manifest rather than deriving filenames from SHA prefixes.
+Consumers report missing or malformed inputs through their normal read failures;
+repository-wide strict validation belongs to `scripts/check_bom_consistency.py`.
+The checker is not a packaging API.
 
-```bash
-python3 /path/to/triton-ascend/cmake/dependencies.py --hash
-python3 /path/to/triton-ascend/cmake/dependencies.py --patches
-python3 /path/to/triton-ascend/cmake/dependencies.py --json-version
-python3 /path/to/triton-ascend/cmake/dependencies.py --validate
-```
+The previous metadata-only CMake module has been removed: its revision variables
+had no build consumers. Installed dependencies continue to use the existing
+MLIR/LLVMConfig and JSON include discovery. A source commit cannot prove that an
+arbitrary user-supplied LLVM binary matches it.
 
-Python validates schema versions/types, duplicate/unknown keys, full SHA values,
-safe filenames and the exact sorted patch set. CMake validates its own JSON
-schema/field types and LLVM revision/JSON tag syntax. JSON metadata does not
-prove that a user-supplied LLVM binary matches the selected source revision.
-The shell wrapper honors explicit `LLVM_COMMIT_HASH` first and otherwise uses
-`${PYTHON:-python3}`. Parser failures stop before downloads. Its generic source
-build behavior is unchanged; it is not a new Ascend patch-application entry point.
+## Upstream comparison
+
+The 2026-10-28 review used these immutable sources:
+
+- [Triton build helpers](https://github.com/triton-lang/triton/blob/96ffafdd35cbd70f0a12a81ba2b3d1acb43888a2/python/build_helpers.py)
+- [Intel build helpers](https://github.com/intel/intel-xpu-backend-for-triton/blob/fd8da9768986fe03457af09b23a167399af6892f/python/build_helpers.py)
+
+Adopt the helper location, package description, environment-flag semantics,
+direct text/JSON reads and separation from packaging entry-point side effects.
+Both references currently pin the JSON library to `v3.11.3` in the text file.
+Ascend keeps its existing versions, public artifact origins, patch hashing,
+offline behavior and user path overrides.
+
+Do not transplant the entire newer build-helper implementation: its
+`BuildHelperArgs`, generated CMake variables, archive cache and mirror routing
+require coordinated changes to the corresponding CMake and packaging callers.
+Its LLVM `build_number` and platform `sha256sum` require an Ascend artifact
+producer and verification contract; adding fields without that implementation
+would not establish integrity. These remain follow-up work in RFC 2739.
 
 ## Runtime limits and compatibility
 
 Requirements keep their explicit 8.5.0 group; Docker defaults are checked against
-their own CANN, torch-npu and CPU torch tuple. Missing, duplicate or planned
-selections fail. The upstream-added nightly's 9.2.0 group is observed experimental
-and unverified; it cannot become a default through the current selectors.
+their own CANN, torch-npu and CPU torch tuple. Missing, duplicate, experimental
+or planned default selections fail. The observed 9.2.0 nightly group remains
+experimental and unverified. Beta builder exceptions are file-scoped.
 Only the recorded CANN9.0.0/documented-torch2.10.0/profile-torch2.7.1 conflict
 is a warning with tracking, requested owner and exit information. Other drift
-fails; that record does not resolve the incompatibility or certify support.
-Beta builder exceptions are scoped to the observed files.
+fails; this record does not resolve the conflict or certify support.
 
 This prototype does not implement full chip/arch/Python/track profiles,
-release ref resolution, NPU-IR locking, artifact integrity or compatibility
-certification. Existing requirements/version files retain their packaging
-roles; they are not the retired dependency pin interfaces.
+release-ref resolution, NPU-IR locking, artifact integrity or compatibility
+certification. Requirements, release version files and plugin names retain their
+existing packaging roles.
 
 ## Updating dependencies
 
-1. Change the relevant JSON directly, with actual patches and their manifest
-   updated atomically. Do not recreate text copies or cross-branch fallbacks.
-2. Update and review the explicitly assigned consumers without redirecting
-   unrelated environments through a global default.
+1. Change the authoritative file directly. Update LLVM patches and their
+   manifest atomically. Never recreate `llvm-hash.txt` or `json-info.json` mirrors.
+2. Review each affected consumer without redirecting unrelated environments
+   through a global default.
 3. Run `python scripts/check_bom_consistency.py` and
    `python -m pytest -q third_party/ascend/build_tests`.
-4. Aggregate build caches include LLVM/JSON/Bisheng JSON, actual patch contents,
-   NVIDIA metadata and their relevant platform/recipe inputs. Runtime/docs-only
-   changes do not rotate the LLVM dependency portion.
+4. Aggregate compiler caches cover `llvm-info.json`, `json-version.txt`,
+   `bisheng-info.json`, actual patch contents and NVIDIA metadata. Runtime/docs
+   changes do not rotate that dependency portion.
 
-The existing source-distribution manifest grafts cmake and third_party, including
-the reader, metadata, native CMake module and patches. This static inclusion
-does not replace an actual source-distribution build/install check.
-Migration removes the old text interfaces on this branch; external scripts
-and future upstream merges must be migrated explicitly. Frozen release branches
-use their own metadata/entry points and are not silently redirected to main.
+The source-distribution manifest already includes `python/build_helpers.py` and
+grafts cmake/third_party. Static inclusion does not replace a real sdist
+build/install check. External scripts must migrate the retired LLVM/Bisheng text
+interfaces; historical release checkouts remain a separate migration concern.

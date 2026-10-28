@@ -21,7 +21,7 @@ def test_documented_checkout_uses_the_local_manifest(document, tmp_path):
     text = (REPO / document).read_text(encoding="utf-8")
     assert "llvm_patch_${LLVM_COMMIT:0:8}" not in text
     assert "raw.githubusercontent.com/triton-lang/triton-ascend/main/third_party/ascend/patch" not in text
-    start = text.index('TRITON_ROOT="$(pwd)"')
+    start = text.rfind("\n", 0, text.index('TRITON_ROOT="$(pwd)"')) + 1
     ends = [text.find(marker, start) for marker in ("export LLVM_INSTALL_PREFIX", "\n```", "\n    ```")]
     end = min(value for value in ends if value >= 0)
     command = textwrap.dedent(text[start:end])
@@ -43,7 +43,6 @@ def test_documented_checkout_uses_the_local_manifest(document, tmp_path):
     root = tmp_path / "ascend"
     build = root / "cmake"
     build.mkdir(parents=True)
-    shutil.copyfile(REPO / "cmake/dependencies.py", build / "dependencies.py")
     deps = build
     patch_dir = root / "third_party/ascend/patch"
     patch_dir.mkdir(parents=True)
