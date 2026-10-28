@@ -107,11 +107,11 @@ jobs:
         command -v python3 >/dev/null || { echo "Python 3 is required to resolve LLVM metadata" >&2; exit 1; }
         LLVM_COMMIT_HASH="$(python3 -c 'import json; print(json.load(open("cmake/llvm-info.json"))["llvm_hash"])')"
         echo "Found LLVM commit hash: ${LLVM_COMMIT_HASH}"
-        echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
+        echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> "${GITHUB_ENV}"
 
         SHORT_LLVM_COMMIT_HASH="${LLVM_COMMIT_HASH:0:8}"
         echo "Short LLVM commit hash: ${SHORT_LLVM_COMMIT_HASH}"
-        echo "short_llvm_commit_hash=${SHORT_LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
+        echo "short_llvm_commit_hash=${SHORT_LLVM_COMMIT_HASH}" >> "${GITHUB_ENV}"
 
     - name: Compute Patch Hash
       shell: bash
@@ -130,11 +130,11 @@ jobs:
           PATCH_HASH="00000000"
         fi
         echo "Patch hash: ${PATCH_HASH}"
-        echo "patch_hash=${PATCH_HASH}" >> ${GITHUB_ENV}
+        echo "patch_hash=${PATCH_HASH}" >> "${GITHUB_ENV}"
 
         INSTALL_DIR="llvm-${{ env.short_llvm_commit_hash }}-${PATCH_HASH}-${{ matrix.config.target-os }}-${{ matrix.config.arch }}"
         echo "LLVM installation directory name: ${INSTALL_DIR}"
-        echo "llvm_install_dir=${INSTALL_DIR}" >> ${GITHUB_ENV}
+        echo "llvm_install_dir=${INSTALL_DIR}" >> "${GITHUB_ENV}"
 
     - name: Checkout LLVM
       uses: actions/checkout@v5
@@ -146,11 +146,10 @@ jobs:
     - name: Apply LLVM patches
       shell: bash
       run: |
-        LLVM_SHORT="${{ env.short_llvm_commit_hash }}"
         PATCH_DIR="third_party/ascend/patch"
         if [ -d "${PATCH_DIR}" ]; then
           cd llvm-project
-          for patchfile in ${GITHUB_WORKSPACE}/${PATCH_DIR}/llvm_patch_*.patch; do
+          for patchfile in "${GITHUB_WORKSPACE}/${PATCH_DIR}"/llvm_patch_*.patch; do
             if [ -f "$patchfile" ]; then
               echo "Applying $patchfile..."
               git apply "$patchfile"
