@@ -78,8 +78,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          symlinks: true
 
       - name: Login to Quay.io
         if: github.event_name == 'push'

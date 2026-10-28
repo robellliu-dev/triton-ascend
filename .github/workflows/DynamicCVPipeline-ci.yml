@@ -221,10 +221,8 @@ jobs:
           cd pr
           command -v jq >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq jq; }
           arch=$(uname -m)
-          filename=$(jq -r --arg arch "${arch}" '.bisheng[$arch].file // empty' cmake/bisheng-info.json)
-          checksum=$(jq -r --arg arch "${arch}" '.bisheng[$arch].sha256 // empty' cmake/bisheng-info.json)
-          test -n "$filename"
-          test -n "$checksum"
+          filename=$(jq -er --arg arch "${arch}" '.bisheng[$arch].file | strings | select(length > 0)' cmake/bisheng-info.json)
+          checksum=$(jq -er --arg arch "${arch}" '.bisheng[$arch].sha256 | strings | select(length > 0)' cmake/bisheng-info.json)
           curl -fL --connect-timeout 30 --retry 5 --retry-all-errors \
             "https://triton-ascend-artifacts.obs.cn-southwest-2.myhuaweicloud.com/cann/${filename}" \
             -o bisheng.run

@@ -3,7 +3,7 @@ name: Ascend950 CI
 on:
   pull_request_target:
     branches: ['feature/simd-simt-compile-mode']
-    paths: &paths
+    paths:
       # Source code
       - 'python/**'
       - 'lib/**'
@@ -63,9 +63,6 @@ jobs:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           submodules: "true"
-          # This workflow is scoped to contents:read only and passes zero
-          # secrets to the build job — PR code cannot exfiltrate anything.
-          allow-unsafe-pr-checkout: true
 
       - name: Add git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
