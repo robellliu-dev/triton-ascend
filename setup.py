@@ -1,6 +1,7 @@
 import os
 import platform
 import re
+import runpy
 import contextlib
 import shlex
 import shutil
@@ -185,9 +186,8 @@ class Package:
 
 # json
 def get_json_package_info():
-    version = (Path(get_base_dir()) / "cmake" / "json-version.txt").read_text(encoding="utf-8").strip()
-    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", version) is None:
-        raise ValueError("cmake/json-version.txt must contain a release tag such as v3.11.3")
+    reader = runpy.run_path(str(Path(get_base_dir()) / "cmake/dependencies.py"))
+    version = reader["load_json_info"](get_base_dir())["version"]
     url = f"https://github.com/nlohmann/json/releases/download/{version}/include.zip"
     return Package("json", "", url, "JSON_INCLUDE_DIR", "", "JSON_SYSPATH")
 
@@ -240,9 +240,8 @@ def get_llvm_package_info():
         return Package("llvm", "LLVM-C.lib", "", "LLVM_INCLUDE_DIRS", "LLVM_LIBRARY_DIR", "LLVM_SYSPATH")
     # use_assert_enabled_llvm = check_env_flag("TRITON_USE_ASSERT_ENABLED_LLVM", "False")
     # release_suffix = "assert" if use_assert_enabled_llvm else "release"
-    llvm_hash_path = os.path.join(get_base_dir(), "cmake", "llvm-hash.txt")
-    with open(llvm_hash_path, "r") as llvm_hash_file:
-        rev = llvm_hash_file.read(8)
+    reader = runpy.run_path(str(Path(get_base_dir()) / "cmake/dependencies.py"))
+    rev = reader["load_llvm_info"](get_base_dir())["llvm_hash"][:8]
     name = f"llvm-{rev}-{system_suffix}"
     # Create a stable symlink that doesn't include revision
     sym_name = f"llvm-{system_suffix}"

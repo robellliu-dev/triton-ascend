@@ -29,7 +29,7 @@ jobs:
     runs-on: linux-amd64-cpu-16
     container:
       # Static compatibility-group pin: the maintained 8.5.0 group (910b) in
-      # third_party/ascend/deps/runtime.json; validated by scripts/check_bom_consistency.py.
+      # cmake/ascend-runtime-info.json; validated by scripts/check_bom_consistency.py.
       image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/triton:8.5.0-910b-ubuntu22.04-py3.11-latest
     timeout-minutes: 120
     permissions:
@@ -46,7 +46,7 @@ jobs:
             ~/.triton/json
             ~/.triton/nvidia
             ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-dcv-${{ hashFiles('cmake/llvm-hash.txt', 'cmake/json-version.txt', 'third_party/ascend/deps/llvm-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'third_party/ascend/deps/toolchain.json', 'cmake/nvidia-toolchain-version.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-dcv-${{ hashFiles('cmake/llvm-info.json', 'cmake/json-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'cmake/bisheng-info.json', 'cmake/nvidia-toolchain-version.json') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-910b-py3.11-dcv
 
       - name: Checkout base
@@ -155,7 +155,7 @@ jobs:
     runs-on: linux-amd64-cpu-16
     container:
       # Static compatibility-group pin: the early-access 9.1.0 group (950) in
-      # third_party/ascend/deps/runtime.json; validated by scripts/check_bom_consistency.py.
+      # cmake/ascend-runtime-info.json; validated by scripts/check_bom_consistency.py.
       image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/triton:9.1.0-950-ubuntu22.04-py3.12-latest
     timeout-minutes: 180
     permissions:
@@ -216,7 +216,7 @@ jobs:
             ~/.triton/json
             ~/.triton/nvidia
             ${{ github.workspace }}/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-cann9.1.0-ubuntu22.04-950-py3.12-dcv-mojo-${{ hashFiles('pr/cmake/llvm-hash.txt', 'pr/cmake/json-version.txt', 'pr/third_party/ascend/deps/llvm-info.json', 'pr/third_party/ascend/patch/llvm_patch_*.patch', 'pr/third_party/ascend/deps/toolchain.json', 'pr/cmake/nvidia-toolchain-version.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cann9.1.0-ubuntu22.04-950-py3.12-dcv-mojo-${{ hashFiles('pr/cmake/llvm-info.json', 'pr/cmake/json-info.json', 'pr/third_party/ascend/patch/llvm_patch_*.patch', 'pr/cmake/bisheng-info.json', 'pr/cmake/nvidia-toolchain-version.json') }}
 
       - name: Install Bisheng compiler
         shell: bash
@@ -225,8 +225,8 @@ jobs:
           cd pr
           command -v jq >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq jq; }
           arch=$(uname -m)
-          filename=$(jq -r --arg arch "${arch}" '.bisheng[$arch].file // empty' third_party/ascend/deps/toolchain.json)
-          checksum=$(jq -r --arg arch "${arch}" '.bisheng[$arch].sha256 // empty' third_party/ascend/deps/toolchain.json)
+          filename=$(jq -r --arg arch "${arch}" '.bisheng[$arch].file // empty' cmake/bisheng-info.json)
+          checksum=$(jq -r --arg arch "${arch}" '.bisheng[$arch].sha256 // empty' cmake/bisheng-info.json)
           test -n "$filename"
           test -n "$checksum"
           curl -fL --connect-timeout 30 --retry 5 --retry-all-errors \

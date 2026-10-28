@@ -1,5 +1,6 @@
 import glob
 import hashlib
+import json
 from pathlib import Path
 import re
 import shutil
@@ -34,16 +35,17 @@ def test_compiler_cache_inputs_follow_the_canonical_pin_and_patch_bytes(workflow
                     target = tmp_path / source.relative_to(REPO)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(source, target)
-        pin = tmp_path / "cmake/llvm-hash.txt"
+        pin = tmp_path / "cmake/llvm-info.json"
         pin.parent.mkdir(parents=True, exist_ok=True)
-        pin.write_text("a" * 40)
         before = fingerprint(tmp_path, patterns)
-        pin.write_text("b" * 40)
+        data = json.loads(pin.read_text())
+        data["llvm_hash"] = "b" * 40
+        pin.write_text(json.dumps(data))
         assert fingerprint(tmp_path, patterns) != before, f"{workflow}: canonical pin missing from cache inputs"
 
-        json_pin = tmp_path / "cmake/json-version.txt"
+        json_pin = tmp_path / "cmake/json-info.json"
         before = fingerprint(tmp_path, patterns)
-        json_pin.write_text("v3.12.0\n")
+        json_pin.write_text(json.dumps({"schema_version": 1, "version": "v3.12.0"}))
         assert fingerprint(tmp_path, patterns) != before, f"{workflow}: JSON version missing from cache inputs"
 
         patch = next((tmp_path / "third_party/ascend/patch").glob("llvm_patch_*.patch"))
@@ -52,7 +54,6 @@ def test_compiler_cache_inputs_follow_the_canonical_pin_and_patch_bytes(workflow
         assert fingerprint(tmp_path, patterns) != before
 
         before = fingerprint(tmp_path, patterns)
-        deps = tmp_path / "third_party/ascend/deps"
-        (deps / "runtime.json").write_text('{"runtime": "changed"}')
-        (deps / "README.md").write_text("documentation-only update")
+        (tmp_path / "cmake/ascend-runtime-info.json").write_text('{"runtime": "changed"}')
+        (tmp_path / "cmake/README.ascend-dependencies.md").write_text("documentation-only update")
         assert fingerprint(tmp_path, patterns) == before

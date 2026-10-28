@@ -43,7 +43,7 @@ jobs:
     runs-on: [linux-aarch64-a3-800i-4, cn12-001]
     container:
       # Static compatibility-group pin: the maintained 8.5.0 group (a3) in
-      # third_party/ascend/deps/runtime.json; validated by scripts/check_bom_consistency.py.
+      # cmake/ascend-runtime-info.json; validated by scripts/check_bom_consistency.py.
       image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/triton:8.5.0-a3-ubuntu22.04-py3.10-latest
     timeout-minutes: 600
     env:
@@ -105,17 +105,17 @@ jobs:
       - name: Download and install Bisheng compiler
         shell: bash
         run: |
-          if [ ! -f third_party/ascend/deps/toolchain.json ]; then
-            echo "third_party/ascend/deps/toolchain.json not found, skipping"
+          if [ ! -f cmake/bisheng-info.json ]; then
+            echo "cmake/bisheng-info.json not found, skipping"
             exit 0
           fi
           command -v jq >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq jq; }
           OBS_BASE="https://triton-ascend-artifacts.obs.cn-southwest-2.myhuaweicloud.com"
           ARCH=$(uname -m)
-          BISHENG_FILENAME=$(jq -r --arg arch "${ARCH}" '.bisheng[$arch].file // empty' third_party/ascend/deps/toolchain.json)
-          BISHENG_SHA256=$(jq -r --arg arch "${ARCH}" '.bisheng[$arch].sha256 // empty' third_party/ascend/deps/toolchain.json)
+          BISHENG_FILENAME=$(jq -r --arg arch "${ARCH}" '.bisheng[$arch].file // empty' cmake/bisheng-info.json)
+          BISHENG_SHA256=$(jq -r --arg arch "${ARCH}" '.bisheng[$arch].sha256 // empty' cmake/bisheng-info.json)
           if [ -z "${BISHENG_FILENAME}" ]; then
-            echo "Error: third_party/ascend/deps/toolchain.json has no bisheng entry for arch ${ARCH}." >&2
+            echo "Error: cmake/bisheng-info.json has no bisheng entry for arch ${ARCH}." >&2
             exit 1
           fi
           echo "Downloading: ${BISHENG_FILENAME}"
@@ -137,7 +137,7 @@ jobs:
             ~/.triton/json
             ~/.triton/nvidia
             ~/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-a3-py3.10-triton-${{ hashFiles('cmake/llvm-hash.txt', 'cmake/json-version.txt', 'third_party/ascend/deps/llvm-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'third_party/ascend/deps/toolchain.json', 'cmake/nvidia-toolchain-version.json') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-a3-py3.10-triton-${{ hashFiles('cmake/llvm-info.json', 'cmake/json-info.json', 'third_party/ascend/patch/llvm_patch_*.patch', 'cmake/bisheng-info.json', 'cmake/nvidia-toolchain-version.json') }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-cann8.5.0-ubuntu22.04-a3-py3.10-triton-
 
       # ── Install the sync workflow package + Claude Code CLI ────────────────

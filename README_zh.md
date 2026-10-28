@@ -107,8 +107,8 @@ pip install -e .
 ```bash
 # 在当前 triton-ascend 仓库根目录执行；使用唯一 LLVM pin 和本地补丁清单。
 TRITON_ROOT="$(pwd)"
-LLVM_COMMIT=$(python3 "$TRITON_ROOT/third_party/ascend/build/llvm.py" --hash) || exit 1
-LLVM_PATCHES=$(python3 "$TRITON_ROOT/third_party/ascend/build/llvm.py" --patches) || exit 1
+LLVM_COMMIT=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --hash) || exit 1
+LLVM_PATCHES=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --patches) || exit 1
 
 git clone --no-checkout https://github.com/llvm/llvm-project.git
 cd llvm-project

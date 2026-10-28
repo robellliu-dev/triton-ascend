@@ -107,8 +107,8 @@ pip install -e .
 ```bash
 # Run from this triton-ascend checkout; use its sole LLVM pin and local patch manifest.
 TRITON_ROOT="$(pwd)"
-LLVM_COMMIT=$(python3 "$TRITON_ROOT/third_party/ascend/build/llvm.py" --hash) || exit 1
-LLVM_PATCHES=$(python3 "$TRITON_ROOT/third_party/ascend/build/llvm.py" --patches) || exit 1
+LLVM_COMMIT=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --hash) || exit 1
+LLVM_PATCHES=$(python3 "$TRITON_ROOT/cmake/dependencies.py" --patches) || exit 1
 
 git clone --no-checkout https://github.com/llvm/llvm-project.git
 cd llvm-project

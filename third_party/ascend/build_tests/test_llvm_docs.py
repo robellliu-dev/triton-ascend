@@ -41,18 +41,15 @@ def test_documented_checkout_uses_the_local_manifest(document, tmp_path):
     revision = git("rev-parse", "HEAD").stdout.strip()
 
     root = tmp_path / "ascend"
-    build = root / "third_party/ascend/build"
+    build = root / "cmake"
     build.mkdir(parents=True)
-    shutil.copyfile(REPO / "third_party/ascend/build/llvm.py", build / "llvm.py")
-    (root / "cmake").mkdir()
-    (root / "cmake/llvm-hash.txt").write_text(revision)
-    deps = root / "third_party/ascend/deps"
-    deps.mkdir()
+    shutil.copyfile(REPO / "cmake/dependencies.py", build / "dependencies.py")
+    deps = build
     patch_dir = root / "third_party/ascend/patch"
-    patch_dir.mkdir()
+    patch_dir.mkdir(parents=True)
     patch_name = "llvm_patch_fixture.patch"
     (deps / "llvm-info.json").write_text(
-        json.dumps({"schema_version": 1, "llvm_hash_file": "cmake/llvm-hash.txt", "patches": [patch_name]}))
+        json.dumps({"schema_version": 1, "llvm_hash": revision, "patches": [patch_name]}))
     (patch_dir / patch_name).write_text(
         "diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n"
         "@@ -1 +1 @@\n-original\n+patched\n", newline="\n")

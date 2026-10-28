@@ -3,22 +3,20 @@ name: LLVM Build
 on:
   push:
     paths:
-      - cmake/llvm-hash.txt
+      - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - third_party/ascend/deps/llvm-info.json
-      - third_party/ascend/deps/runtime.json
-      - third_party/ascend/build/llvm.py
+      - cmake/ascend-runtime-info.json
       - scripts/check_bom_consistency.py
+      - cmake/dependencies.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   pull_request:
     paths:
-      - cmake/llvm-hash.txt
+      - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - third_party/ascend/deps/llvm-info.json
-      - third_party/ascend/deps/runtime.json
-      - third_party/ascend/build/llvm.py
+      - cmake/ascend-runtime-info.json
       - scripts/check_bom_consistency.py
+      - cmake/dependencies.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
   workflow_dispatch:
@@ -96,7 +94,7 @@ jobs:
       shell: bash
       run: |
         command -v python3 >/dev/null || { echo "Python 3 is required to resolve LLVM metadata" >&2; exit 1; }
-        LLVM_COMMIT_HASH="$(python3 third_party/ascend/build/llvm.py --hash)"
+        LLVM_COMMIT_HASH="$(python3 cmake/dependencies.py --hash)"
         echo "Found LLVM commit hash: ${LLVM_COMMIT_HASH}"
         echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> ${GITHUB_ENV}
 

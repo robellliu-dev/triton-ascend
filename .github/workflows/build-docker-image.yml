@@ -9,7 +9,7 @@ on:
       - 'requirements.txt'
       - 'requirements_dev.txt'
       - '.github/workflows/build-docker-image.yml'
-      - 'third_party/ascend/deps/runtime.json'
+      - 'cmake/ascend-runtime-info.json'
       - 'scripts/check_bom_consistency.py'
   pull_request:
     branches: [main]
@@ -18,7 +18,7 @@ on:
       - 'requirements.txt'
       - 'requirements_dev.txt'
       - '.github/workflows/build-docker-image.yml'
-      - 'third_party/ascend/deps/runtime.json'
+      - 'cmake/ascend-runtime-info.json'
       - 'scripts/check_bom_consistency.py'
 
 concurrency:
