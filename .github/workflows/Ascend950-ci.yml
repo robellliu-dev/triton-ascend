@@ -63,6 +63,8 @@ jobs:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           submodules: "true"
+          # Required by checkout@v4 for this pull_request_target PR-head checkout.
+          allow-unsafe-pr-checkout: true
 
       - name: Add git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
