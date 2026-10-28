@@ -23,7 +23,7 @@ def checker(tmp_path, monkeypatch):
     return module
 
 
-@pytest.mark.parametrize("mutation", ["missing-default", "duplicate", "planned", "docker-torch"])
+@pytest.mark.parametrize("mutation", ["missing-default", "duplicate", "planned"])
 def test_runtime_selection_fails_closed(checker, mutation):
     runtime = json.loads((checker.DEPS_DIR / "ascend-runtime-info.json").read_text(encoding="utf-8"))
     if mutation == "missing-default":
@@ -35,10 +35,6 @@ def test_runtime_selection_fails_closed(checker, mutation):
         runtime["default_cann"] = "9.2.0"
         requirements = checker.REPO_ROOT / "requirements.txt"
         requirements.write_text("torch-npu==2.10.0.post7\n", encoding="utf-8")
-    else:
-        docker = checker.REPO_ROOT / "docker/Dockerfile"
-        docker.write_text(
-            docker.read_text(encoding="utf-8").replace("torch==2.7.1+cpu", "torch==2.10.0+cpu"), encoding="utf-8")
     checker.check_static_pins(runtime)
     assert checker.errors
 
@@ -155,13 +151,43 @@ def test_uppercase_workflow_pin_cannot_select_a_planned_runtime(checker, monkeyp
     assert checker.errors
 
 
-def test_observed_nightly_stack_is_recorded_without_becoming_the_default(checker, monkeypatch):
-    workflow = REPO / ".github/workflows/release-docker-images-nightly.yml"
-    text = workflow.read_text(encoding="utf-8")
-    import re
+def test_observed_nightly_stack_is_recorded_without_becoming_the_default(checker):
+    info = json.loads((checker.DEPS_DIR / "release-image-info.json").read_text())
     runtime = json.loads((checker.DEPS_DIR / "ascend-runtime-info.json").read_text())
     group = next(group for group in runtime["runtimes"] if group["cann"] == "9.2.0")
     assert group["status"] == "experimental"
-    assert group["torch"] == re.search(r'PYTORCH_VERSION: "([^"]+)"', text).group(1)
-    assert group["torch_npu"] == re.search(r'TORCH_NPU_VERSION: "([^"]+)"', text).group(1)
+    assert group["cann"] == info["cann"]
     assert runtime["default_cann"] != group["cann"]
+
+
+@pytest.mark.parametrize("mutation",
+                         ["valid", "bad-source", "bad-llvm", "unsafe-patch", "bad-checksum", "unknown-runtime"])
+def test_release_image_manifest_is_a_separate_immutable_release_binding(checker, mutation):
+    path = checker.DEPS_DIR / "release-image-info.json"
+    info = json.loads(path.read_text())
+    if mutation == "bad-source":
+        info["source_hash"] = "main"
+    elif mutation == "bad-llvm":
+        info["llvm_hash"] = "short"
+    elif mutation == "unsafe-patch":
+        info["patches"][0]["file"] = "../outside.patch"
+    elif mutation == "bad-checksum":
+        info["patches"][0]["sha256"] = "not-a-digest"
+    elif mutation == "unknown-runtime":
+        info["cann"] = "99.0.0"
+    path.write_text(json.dumps(info))
+    runtime = json.loads((checker.DEPS_DIR / "ascend-runtime-info.json").read_text())
+    checker.check_release_image(runtime)
+    assert bool(checker.errors) == (mutation != "valid")
+
+
+@pytest.mark.parametrize("field", ["llvm", "patch"])
+def test_release_policy_cannot_silently_drift_llvm_or_patch(checker, field):
+    path = checker.REPO_ROOT / "docs/en/community/release_policy.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("f6ded0b", "abcdef0") if field == "llvm" else text.replace("llvm_patch_f6ded0b.patch",
+                                                                                   "llvm_patch_bad.patch")
+    path.write_text(text, encoding="utf-8")
+    runtime = json.loads((checker.DEPS_DIR / "ascend-runtime-info.json").read_text())
+    checker.check_release_policy(runtime)
+    assert checker.errors

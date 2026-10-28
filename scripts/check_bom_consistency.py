@@ -147,7 +147,8 @@ def check_toolchain():
 
 
 def check_schema_versions():
-    for name in ("llvm-info.json", "bisheng-info.json", "ascend-runtime-info.json"):
+    for name in ("llvm-info.json", "bisheng-info.json", "ascend-runtime-info.json", "release-image-info.json",
+                 "triton-distributed-info.json", "npuir-info.json"):
         data = _load_json(DEPS_DIR / name)
         if data.get("schema_version") != SCHEMA_VERSION:
             _fail("schema",
@@ -193,15 +194,62 @@ def _runtime_groups(runtime):
     return groups
 
 
+def check_release_image(runtime):
+    """Validate the frozen release binding independently of main's LLVM pin."""
+    info = _load_json(DEPS_DIR / "release-image-info.json")
+    required = {"schema_version", "triton_version", "source_hash", "llvm_hash", "patches", "cann", "python_version"}
+    if set(info) != required:
+        _fail("release-image", "invalid release image fields")
+        return
+    for key in ("source_hash", "llvm_hash"):
+        if not isinstance(info[key], str) or re.fullmatch(r"[0-9a-f]{40}", info[key]) is None:
+            _fail("release-image", f"{key} must be an immutable full SHA")
+    for key, pattern in (("triton_version", r"[0-9]+\.[0-9]+\.[0-9]+(?:\.post[0-9]+)?"), ("python_version",
+                                                                                          r"[0-9]+\.[0-9]+\.[0-9]+")):
+        if not isinstance(info[key], str) or re.fullmatch(pattern, info[key]) is None:
+            _fail("release-image", f"invalid {key}")
+    patches = info["patches"]
+    if not isinstance(patches, list):
+        _fail("release-image", "patches must be a list")
+        return
+    names = []
+    for patch in patches:
+        if (not isinstance(patch, dict) or set(patch) != {"file", "sha256"} or not isinstance(patch["file"], str)
+                or re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch["file"]) is None
+                or not isinstance(patch["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", patch["sha256"]) is None):
+            _fail("release-image", "invalid release patch basename or SHA-256")
+            return
+        names.append(patch["file"])
+    if names != sorted(set(names)):
+        _fail("release-image", "release patches must be unique and sorted")
+    groups = _runtime_groups(runtime)
+    cann = info["cann"]
+    if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] == "planned":
+        _fail("release-image", "release image must select an existing, non-planned CANN group")
+
+
+def check_distributed_info():
+    info = _load_json(DEPS_DIR / "triton-distributed-info.json")
+    if (set(info) != {"schema_version", "repository", "revision"} or not isinstance(info["revision"], str)
+            or re.fullmatch(r"[0-9a-f]{40}", info["revision"]) is None or not isinstance(info["repository"], str)
+            or re.fullmatch(r"https://[^/\s]+/[A-Za-z0-9_./-]+\.git", info["repository"]) is None):
+        _fail("distributed-info", "expected an HTTPS repository and full commit SHA")
+    info = _load_json(DEPS_DIR / "npuir-info.json")
+    if (set(info) != {"schema_version", "repository", "branch"} or not isinstance(info["repository"], str)
+            or re.fullmatch(r"https://[^/\s]+/[A-Za-z0-9_./-]+\.git", info["repository"]) is None
+            or not isinstance(info["branch"], str) or not info["branch"] or info["branch"].startswith("-")
+            or ".." in info["branch"] or re.fullmatch(r"[A-Za-z0-9_./-]+", info["branch"]) is None):
+        _fail("npuir-info", "expected an HTTPS repository and watch branch")
+
+
 def check_static_pins(runtime):
     runtimes_by_cann = _runtime_groups(runtime)
     if not runtimes_by_cann:
         return
 
-    # Consumers are validated against the complete runtime group (the full
-    # stack tuple), never against the union of values across groups: a value
-    # that only exists in another CANN group (e.g. a planned one) must not
-    # satisfy this consumer.
+    # Requirements retain a package-manager pin. Development Docker now reads
+    # its torch stack from JSON; its real installation block is exercised by
+    # test_development_docker_reads.py rather than parsed as version literals.
 
     pin = re.search(r"^torch-npu==(\S+)", _read(REPO_ROOT / "requirements.txt"), re.MULTILINE)
     if pin is None:
@@ -216,13 +264,6 @@ def check_static_pins(runtime):
                 f"(expected {default_group['torch_npu']})")
 
     dockerfile = _read(REPO_ROOT / "docker" / "Dockerfile")
-    pin = re.search(r"^ARG\s+TORCH_NPU_VERSION=(\S+)", dockerfile, re.MULTILINE)
-    if pin is None:
-        _fail("static-pins", "docker/Dockerfile has no 'ARG TORCH_NPU_VERSION=' default")
-        torch_npu_default = None
-    else:
-        torch_npu_default = pin.group(1)
-
     pin = re.search(r"^ARG\s+CANN_BASE_IMAGE=(\S+)", dockerfile, re.MULTILINE)
     if pin is None:
         _fail("static-pins", "docker/Dockerfile has no 'ARG CANN_BASE_IMAGE=' default")
@@ -234,19 +275,10 @@ def check_static_pins(runtime):
             _fail(
                 "static-pins", f"docker/Dockerfile CANN_BASE_IMAGE pins CANN {cann.group(1)}, not a cann value in "
                 f"runtime.json (known: {sorted(runtimes_by_cann)})")
-        elif torch_npu_default is not None and torch_npu_default != runtimes_by_cann[cann.group(1)]["torch_npu"]:
-            _fail(
-                "static-pins", f"docker/Dockerfile TORCH_NPU_VERSION={torch_npu_default} does not match the "
-                f"torch_npu of the runtime.json group selected by CANN_BASE_IMAGE (CANN {cann.group(1)}, "
-                f"expected {runtimes_by_cann[cann.group(1)]['torch_npu']})")
         if cann is not None and cann.group(1) in runtimes_by_cann:
             group = runtimes_by_cann[cann.group(1)]
             if group["status"] in {"planned", "experimental"}:
                 _fail("static-pins", "docker/Dockerfile selects a planned or experimental default runtime")
-            torch_pin = re.search(r"(?m)^\s*torch==(\S+)", dockerfile)
-            expected = group["torch"] + "+cpu"
-            if torch_pin is None or torch_pin.group(1) != expected:
-                _fail("static-pins", f"docker/Dockerfile must install torch=={expected} for its selected group")
 
 
 def _workflow_files():
@@ -359,8 +391,10 @@ def check_release_policy(runtime):
     try:
         cann_col = columns.index("CANN")
         torch_col = columns.index("PyTorch")
+        llvm_col = columns.index("LLVM commit hash")
+        patch_col = columns.index("Patch")
     except ValueError:
-        _fail("release-policy", "'main Branch Mapping' table header lacks a CANN or PyTorch column")
+        _fail("release-policy", "'main Branch Mapping' table header lacks CANN, PyTorch, LLVM or Patch columns")
         return
 
     for line in lines[header_idx + 1:]:
@@ -374,6 +408,16 @@ def check_release_policy(runtime):
             continue
         cann = cells[cann_col] if cann_col < len(cells) else ""
         torch = cells[torch_col] if torch_col < len(cells) else ""
+        llvm = _load_json(DEPS_DIR / "llvm-info.json")
+        llvm_cell = cells[llvm_col] if llvm_col < len(cells) else ""
+        commit = re.fullmatch(r"\[([0-9a-f]{7,40})\]\(https://github.com/llvm/llvm-project/commit/([0-9a-f]{7,40})\)",
+                              llvm_cell)
+        if commit is None or any(not llvm["llvm_hash"].startswith(value) for value in commit.groups()):
+            _fail("release-policy", "main LLVM column differs from cmake/llvm-info.json")
+        patch_cell = cells[patch_col] if patch_col < len(cells) else ""
+        patches = set(re.findall(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch_cell))
+        if patches != set(llvm["patches"]):
+            _fail("release-policy", "main Patch column differs from cmake/llvm-info.json")
         if cann != runtime["default_cann"]:
             _fail(
                 "release-policy", f"release_policy.md maps 'main' to CANN {cann}, but runtime.json "
@@ -401,6 +445,8 @@ def main():
         check_schema_versions()
         check_llvm_info()
         check_toolchain()
+        check_distributed_info()
+        check_release_image(runtime)
         check_docs_llvm_hash()
         check_static_pins(runtime)
         check_workflows(runtime)

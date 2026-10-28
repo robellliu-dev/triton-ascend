@@ -32,6 +32,7 @@ def test_real_workflow_reader_rejects_unusable_defaults(workflow, selection, tmp
     assert result.returncode == (0 if selection == "9.0.0" else 1), result.stderr
     assert result.stdout == ""
     if selection == "9.0.0":
-        assert output.read_text() == "cann=9.0.0\n"
+        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert values["cann"] == "9.0.0"
     else:
         assert not output.exists()
