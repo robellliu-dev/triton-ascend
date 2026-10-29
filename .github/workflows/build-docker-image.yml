@@ -9,7 +9,6 @@ on:
       - 'requirements.txt'
       - 'requirements_dev.txt'
       - '.github/workflows/build-docker-image.yml'
-      - 'cmake/ascend-runtime-info.json'
   pull_request:
     branches: [main]
     paths:
@@ -17,7 +16,6 @@ on:
       - 'requirements.txt'
       - 'requirements_dev.txt'
       - '.github/workflows/build-docker-image.yml'
-      - 'cmake/ascend-runtime-info.json'
 
 concurrency:
   group: build-docker-${{ github.ref }}
@@ -28,40 +26,12 @@ permissions:
   actions: write
 
 jobs:
-  deps:
-    runs-on: ubuntu-latest
-    outputs:
-      cann: ${{ steps.deps.outputs.cann }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
-      - name: Resolve pinned CANN version from the BOM
-        id: deps
-        shell: python
-        run: |
-          import json
-          import os
-          import re
-          with open("cmake/ascend-runtime-info.json") as stream:
-              runtime = json.load(stream)
-          cann = runtime["default_cann"]
-          if not isinstance(cann, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", cann) is None:
-              raise SystemExit("Invalid default CANN version")
-          groups = [group for group in runtime["runtimes"] if group["cann"] == cann]
-          if len(groups) != 1 or groups[0]["status"] not in {"main", "maintained", "early-access"}:
-              raise SystemExit("Default CANN must select exactly one active runtime")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              print(f"cann={cann}", file=output)
-
   build-images:
-    needs: deps
     name: Build ${{ matrix.cann_version }}-${{ matrix.chip_type }}-${{ matrix.os }}-py${{ matrix.python_version }}-${{ matrix.platforms }}
     # Use buildkit runner matching the target platform.
     runs-on: ${{ matrix.platforms == 'amd64' && 'linux-amd64-cpu-4' || 'linux-aarch64-cpu-4' }}
     container:
-      image: swr.cn-north-12.myhuaweicloud.com/base_image/ascend-ci/cann:${{ needs.deps.outputs.cann }}-a3-ubuntu22.04-py3.12
+      image: swr.cn-north-12.myhuaweicloud.com/base_image/ascend-ci/cann:9.0.0-a3-ubuntu22.04-py3.12
     timeout-minutes: 360
 
     strategy:
@@ -79,6 +49,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          symlinks: true
 
       - name: Login to Quay.io
         if: github.event_name == 'push'

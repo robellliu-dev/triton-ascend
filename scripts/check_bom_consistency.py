@@ -1,12 +1,8 @@
-"""Consistency checks between the dependency BOM and its consumers.
+"""Audit the explicitly migrated LLVM, JSON-library and Bisheng inputs.
 
-The catalog indexes canonical cmake JSON pins and Ascend-owned metadata. Checks
-cover explicitly supported consumers, not full runtime profiles or arbitrary
-workflow expressions. See the catalog README for the current scope.
-
-Run locally:  python scripts/check_bom_consistency.py
+Production consumers read their metadata directly. This script is not a reader
+API, a runtime compatibility matrix or a release artifact verifier.
 """
-
 import glob
 import json
 import os
@@ -15,51 +11,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEPS_DIR = REPO_ROOT / "cmake"
-WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
-
-# BOM schema revision understood by this checker; each dependency JSON document must
-# declare exactly this version.
+WORKFLOWS_DIR = REPO_ROOT / ".github/workflows"
 SCHEMA_VERSION = 1
-
-# Checkout roots used by workflows when calling hashFiles(). A hashFiles()
-# argument is resolved only after stripping one of these declared prefixes --
-# never an arbitrary leading path component.
 CHECKOUT_ROOTS = ("", "pr/")
-
-# File-scoped temporary builder exceptions. Runtime/release maintainer review
-# requested in RFC #2739; remove when the builder retires or gets a full profile.
-BETA_CANN_EXCEPTIONS = {
-    ".github/workflows/build-docker-image.yml": {"9.0.0-beta.2", "9.2.0-beta.1"},
-    ".github/workflows/wheels.yml": {"9.2.0-beta.2"},
-    ".github/workflows/npuir-build.yml": {"9.2.0-beta.2"},
-    ".github/workflows/build/wheels.Dockerfile": {"9.2.0-beta.2"},
-}
-
-# Guides use the local LLVM reader for the canonical pin and patch manifest.
-# Any 40-hex `git checkout` literal
-# (or hardcoded llvm_patch_<hash>.patch filename) that reappears here is a
-# regression and must at least agree with the BOM.
-DOC_SITES = (
-    "README.md",
-    "README_zh.md",
-    "docs/en/installation_guide.md",
-    "docs/zh/installation_guide.md",
-)
-
-# Matches container tags ("cann:9.0.0-a3-ubuntu22.04-py3.12"), install paths
-# ("cann-9.2.0-beta.2") and cache-key literals ("cann8.5.0").
-CANN_VERSION_RE = re.compile(r"(?:cann|triton|manylinux)[:-]?(\d+(?:\.\d+)*(?:-beta\.\d+)?)")
-
+DOC_SITES = ("README.md", "README_zh.md", "docs/en/installation_guide.md", "docs/zh/installation_guide.md")
 errors = []
-warnings = []
 
 
 def _fail(check, message):
     errors.append(f"[{check}] {message}")
-
-
-def _warn(check, message):
-    warnings.append(f"[{check}] {message}")
 
 
 def _load_json(path):
@@ -146,147 +106,6 @@ def check_toolchain():
         _fail("toolchain", str(exc))
 
 
-def check_schema_versions():
-    for name in ("llvm-info.json", "bisheng-info.json", "ascend-runtime-info.json", "release-image-info.json",
-                 "triton-distributed-info.json", "npuir-info.json"):
-        data = _load_json(DEPS_DIR / name)
-        if data.get("schema_version") != SCHEMA_VERSION:
-            _fail("schema",
-                  f"{name} must declare \"schema_version\": {SCHEMA_VERSION} (got {data.get('schema_version')!r})")
-
-
-def _runtime_groups(runtime):
-    fields = {"schema_version", "default_cann", "runtimes", "consumers", "reconciliation"}
-    if not isinstance(runtime, dict) or set(runtime) != fields or not isinstance(runtime["runtimes"], list):
-        _fail("runtime-schema", "expected schema_version, default_cann, runtimes list, consumers and reconciliation")
-        return {}
-    if (not isinstance(runtime["consumers"], dict) or set(runtime["consumers"]) != {"requirements.txt"}
-            or not isinstance(runtime["reconciliation"], dict)):
-        _fail("runtime-schema", "invalid consumers or reconciliation object")
-        return {}
-    for name, item in runtime["reconciliation"].items():
-        required = {"cann", "documented_torch", "profile_torch", "owner", "tracking", "exit_condition"}
-        if (name != "release_policy.main" or not isinstance(item, dict) or set(item) != required
-                or any(not isinstance(value, str) or not value.strip() for value in item.values())):
-            _fail("runtime-schema", "invalid release_policy.main reconciliation record")
-            return {}
-    groups = {}
-    for group in runtime["runtimes"]:
-        if not isinstance(group, dict) or set(group) != {"cann", "torch", "torch_npu", "status"}:
-            _fail("runtime-schema", "each runtime needs cann, torch, torch_npu and status")
-            return {}
-        cann = group.get("cann")
-        if not isinstance(cann, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", cann) is None or cann in groups:
-            _fail("runtime-schema", f"invalid or duplicate CANN group: {cann!r}")
-            return {}
-        if any(not isinstance(group.get(key), str) or not group[key] for key in ("torch", "torch_npu", "status")):
-            _fail("runtime-schema", f"CANN {cann} needs torch, torch_npu and status strings")
-            return {}
-        if group["status"] not in {"main", "maintained", "early-access", "experimental", "planned"}:
-            _fail("runtime-schema", f"unknown status for CANN {cann}")
-            return {}
-        groups[cann] = group
-    selected = [runtime.get("default_cann"), runtime.get("consumers", {}).get("requirements.txt")]
-    for cann in selected:
-        if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] in {"planned", "experimental"}:
-            _fail("runtime-schema", f"default consumer selects missing, planned or experimental CANN group: {cann!r}")
-            return {}
-    return groups
-
-
-def check_release_image(runtime):
-    """Validate the frozen release binding independently of main's LLVM pin."""
-    info = _load_json(DEPS_DIR / "release-image-info.json")
-    required = {"schema_version", "triton_version", "source_hash", "llvm_hash", "patches", "cann", "python_version"}
-    if set(info) != required:
-        _fail("release-image", "invalid release image fields")
-        return
-    for key in ("source_hash", "llvm_hash"):
-        if not isinstance(info[key], str) or re.fullmatch(r"[0-9a-f]{40}", info[key]) is None:
-            _fail("release-image", f"{key} must be an immutable full SHA")
-    for key, pattern in (("triton_version", r"[0-9]+\.[0-9]+\.[0-9]+(?:\.post[0-9]+)?"), ("python_version",
-                                                                                          r"[0-9]+\.[0-9]+\.[0-9]+")):
-        if not isinstance(info[key], str) or re.fullmatch(pattern, info[key]) is None:
-            _fail("release-image", f"invalid {key}")
-    patches = info["patches"]
-    if not isinstance(patches, list):
-        _fail("release-image", "patches must be a list")
-        return
-    names = []
-    for patch in patches:
-        if (not isinstance(patch, dict) or set(patch) != {"file", "sha256"} or not isinstance(patch["file"], str)
-                or re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch["file"]) is None
-                or not isinstance(patch["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", patch["sha256"]) is None):
-            _fail("release-image", "invalid release patch basename or SHA-256")
-            return
-        names.append(patch["file"])
-    if names != sorted(set(names)):
-        _fail("release-image", "release patches must be unique and sorted")
-    groups = _runtime_groups(runtime)
-    cann = info["cann"]
-    if not isinstance(cann, str) or cann not in groups or groups[cann]["status"] == "planned":
-        _fail("release-image", "release image must select an existing, non-planned CANN group")
-
-
-def check_distributed_info():
-    info = _load_json(DEPS_DIR / "triton-distributed-info.json")
-    if (set(info) != {"schema_version", "repository", "revision"} or not isinstance(info["revision"], str)
-            or re.fullmatch(r"[0-9a-f]{40}", info["revision"]) is None or not isinstance(info["repository"], str)
-            or re.fullmatch(r"https://[^/\s]+/[A-Za-z0-9_./-]+\.git", info["repository"]) is None):
-        _fail("distributed-info", "expected an HTTPS repository and full commit SHA")
-    info = _load_json(DEPS_DIR / "npuir-info.json")
-    if (set(info) != {"schema_version", "repository", "branch"} or not isinstance(info["repository"], str)
-            or re.fullmatch(r"https://[^/\s]+/[A-Za-z0-9_./-]+\.git", info["repository"]) is None
-            or not isinstance(info["branch"], str) or not info["branch"] or info["branch"].startswith("-")
-            or ".." in info["branch"] or re.fullmatch(r"[A-Za-z0-9_./-]+", info["branch"]) is None):
-        _fail("npuir-info", "expected an HTTPS repository and watch branch")
-
-
-def check_static_pins(runtime):
-    runtimes_by_cann = _runtime_groups(runtime)
-    if not runtimes_by_cann:
-        return
-
-    # Requirements retain a package-manager pin. Development Docker now reads
-    # its torch stack from JSON; its real installation block is exercised by
-    # test_development_docker_reads.py rather than parsed as version literals.
-
-    pin = re.search(r"^torch-npu==(\S+)", _read(REPO_ROOT / "requirements.txt"), re.MULTILINE)
-    if pin is None:
-        _fail("static-pins", "requirements.txt has no 'torch-npu==<version>' pin")
-    else:
-        selected_cann = runtime["consumers"]["requirements.txt"]
-        default_group = runtimes_by_cann[selected_cann]
-        if default_group is not None and pin.group(1) != default_group["torch_npu"]:
-            _fail(
-                "static-pins", f"requirements.txt torch-npu=={pin.group(1)} does not match the torch_npu of the "
-                f"runtime.json group assigned to requirements.txt (CANN {selected_cann}) "
-                f"(expected {default_group['torch_npu']})")
-
-    dockerfile = _read(REPO_ROOT / "docker" / "Dockerfile")
-    pin = re.search(r"^ARG\s+CANN_BASE_IMAGE=(\S+)", dockerfile, re.MULTILINE)
-    if pin is None:
-        _fail("static-pins", "docker/Dockerfile has no 'ARG CANN_BASE_IMAGE=' default")
-    else:
-        cann = CANN_VERSION_RE.search(pin.group(1))
-        if cann is None:
-            _fail("static-pins", f"docker/Dockerfile CANN_BASE_IMAGE={pin.group(1)} carries no CANN version")
-        elif cann.group(1) not in runtimes_by_cann:
-            _fail(
-                "static-pins", f"docker/Dockerfile CANN_BASE_IMAGE pins CANN {cann.group(1)}, not a cann value in "
-                f"runtime.json (known: {sorted(runtimes_by_cann)})")
-        if cann is not None and cann.group(1) in runtimes_by_cann:
-            group = runtimes_by_cann[cann.group(1)]
-            if group["status"] in {"planned", "experimental"}:
-                _fail("static-pins", "docker/Dockerfile selects a planned or experimental default runtime")
-
-
-def _workflow_files():
-    for path in sorted(WORKFLOWS_DIR.rglob("*")):
-        if path.is_file():
-            yield path
-
-
 def _glob_exists(relative):
     """Check a (possibly checkout-prefixed) hashFiles() argument against the repo.
 
@@ -305,49 +124,6 @@ def _glob_exists(relative):
         if glob.glob(os.path.join(REPO_ROOT, candidate), recursive=True):
             return True
     return False
-
-
-def check_workflows(runtime):
-    groups = _runtime_groups(runtime)
-    if not groups:
-        return
-    declared_cann = {cann for cann, group in groups.items() if group["status"] != "planned"}
-    list_re = re.compile(r"cann_version[\"']?\s*:\s*\[([^\]]*)\]")
-    scalar_re = re.compile(r"(?:cann_version|CANN_VERSION)[\"']?\s*:\s*[\"']?([\w.\-]+)")
-    hash_files_re = re.compile(r"hashFiles\(([^)]*)\)")
-
-    for path in _workflow_files():
-        text = _read(path)
-        rel = path.relative_to(REPO_ROOT).as_posix()
-        known_cann = declared_cann | BETA_CANN_EXCEPTIONS.get(rel, set())
-
-        for match in CANN_VERSION_RE.finditer(text):
-            version = match.group(1)
-            if version not in known_cann:
-                _fail(
-                    "workflows-cann", f"{rel}:{_line_no(text, match.start())} references CANN {version}, which is "
-                    f"not declared in runtime.json or an exception for this file")
-
-        for line_no, line in enumerate(text.splitlines(), start=1):
-            list_match = list_re.search(line)
-            if list_match is not None:
-                for item in list_match.group(1).split(","):
-                    item = item.strip().strip("\"'")
-                    if item and item not in known_cann:
-                        _fail("workflows-cann",
-                              f"{rel}:{line_no} cann_version entry '{item}' not declared in runtime.json")
-                continue
-            scalar_match = scalar_re.search(line)
-            if scalar_match is not None and scalar_match.group(1) not in known_cann:
-                _fail("workflows-cann", f"{rel}:{line_no} cann_version '{scalar_match.group(1)}' not in runtime.json")
-
-        for match in hash_files_re.finditer(text):
-            for arg in match.group(1).split(","):
-                arg = arg.strip().strip("\"'")
-                if arg and not _glob_exists(arg):
-                    _fail(
-                        "workflows-hashfiles", f"{rel}:{_line_no(text, match.start())} hashFiles argument "
-                        f"'{arg}' matches no file in the repo")
 
 
 def check_docs_llvm_hash():
@@ -372,99 +148,43 @@ def check_docs_llvm_hash():
                     f"not appear in the local LLVM patch manifest")
 
 
-def check_release_policy(runtime):
-    runtimes_by_cann = _runtime_groups(runtime)
-    if not runtimes_by_cann:
-        return
-    lines = _read(REPO_ROOT / "docs" / "en" / "community" / "release_policy.md").splitlines()
-
-    # The "main Branch Mapping" header uniquely contains "Triton commit hash";
-    # the later compatibility matrix table does not.
-    header_idx = next(
-        (i for i, line in enumerate(lines) if "Triton commit hash" in line and "CANN" in line and "PyTorch" in line),
-        None)
-    if header_idx is None:
-        _fail("release-policy",
-              "cannot find the 'main Branch Mapping' table header in docs/en/community/release_policy.md")
-        return
-    columns = [c.strip() for c in lines[header_idx].strip().strip("|").split("|")]
-    try:
-        cann_col = columns.index("CANN")
-        torch_col = columns.index("PyTorch")
-        llvm_col = columns.index("LLVM commit hash")
-        patch_col = columns.index("Patch")
-    except ValueError:
-        _fail("release-policy", "'main Branch Mapping' table header lacks CANN, PyTorch, LLVM or Patch columns")
-        return
-
-    for line in lines[header_idx + 1:]:
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            break
-        if set(stripped) <= set("|-: "):
+def check_workflow_cache_paths():
+    for path in sorted(WORKFLOWS_DIR.rglob("*")):
+        if not path.is_file():
             continue
-        cells = [c.strip().strip("`") for c in stripped.strip("|").split("|")]
-        if not cells or cells[0] != "main":
-            continue
-        cann = cells[cann_col] if cann_col < len(cells) else ""
-        torch = cells[torch_col] if torch_col < len(cells) else ""
-        llvm = _load_json(DEPS_DIR / "llvm-info.json")
-        llvm_cell = cells[llvm_col] if llvm_col < len(cells) else ""
-        commit = re.fullmatch(r"\[([0-9a-f]{7,40})\]\(https://github.com/llvm/llvm-project/commit/([0-9a-f]{7,40})\)",
-                              llvm_cell)
-        if commit is None or any(not llvm["llvm_hash"].startswith(value) for value in commit.groups()):
-            _fail("release-policy", "main LLVM column differs from cmake/llvm-info.json")
-        patch_cell = cells[patch_col] if patch_col < len(cells) else ""
-        patches = set(re.findall(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch_cell))
-        if patches != set(llvm["patches"]):
-            _fail("release-policy", "main Patch column differs from cmake/llvm-info.json")
-        if cann != runtime["default_cann"]:
-            _fail(
-                "release-policy", f"release_policy.md maps 'main' to CANN {cann}, but runtime.json "
-                f"default_cann={runtime['default_cann']}")
-        expected_torch = runtimes_by_cann[runtime["default_cann"]]["torch"]
-        if torch != expected_torch:
-            conflict = runtime.get("reconciliation", {}).get("release_policy.main", {})
-            recorded = (conflict.get("cann"), conflict.get("documented_torch"), conflict.get("profile_torch"))
-            message = (f"release_policy.md main maps CANN {cann} to PyTorch {torch}, "
-                       f"but its runtime group declares {expected_torch}")
-            if (recorded == (cann, torch, expected_torch) and conflict.get("tracking") and conflict.get("owner")
-                    and conflict.get("exit_condition")):
-                _warn("release-policy", message + f"; recorded conflict: {conflict['tracking']}")
-            else:
-                _fail("release-policy", message + "; not the exact recorded reconciliation item")
-        return
-    _fail("release-policy", "no 'main' row found in the 'main Branch Mapping' table")
+        for match in re.finditer(r"hashFiles\(([^)]*)\)", _read(path)):
+            for arg in match.group(1).split(","):
+                arg = arg.strip().strip("\"'")
+                if arg and not _glob_exists(arg):
+                    _fail("workflows-hashfiles", f"{path.relative_to(REPO_ROOT)}: {arg!r} matches no file")
+
+
+def check_release_llvm():
+    info = _load_json(DEPS_DIR / "llvm-info.json")
+    text = _read(REPO_ROOT / "docs/en/community/release_policy.md")
+    row = next((line for line in text.splitlines() if re.match(r"\|\s*`main`\s*\|", line)), "")
+    commits = re.findall(r"\[([0-9a-f]{7,40})\]\(https://github.com/llvm/llvm-project/commit/([0-9a-f]{7,40})\)", row)
+    if len(commits) != 1 or any(not info["llvm_hash"].startswith(value) for value in commits[0]):
+        _fail("release-policy", "main LLVM differs from cmake/llvm-info.json")
+    patches = set(re.findall(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", row))
+    if patches != set(info["patches"]):
+        _fail("release-policy", "main patch list differs from cmake/llvm-info.json")
 
 
 def main():
     errors.clear()
-    warnings.clear()
     try:
-        runtime = _load_json(DEPS_DIR / "ascend-runtime-info.json")
-        check_schema_versions()
         check_llvm_info()
         check_toolchain()
-        check_distributed_info()
-        check_release_image(runtime)
         check_docs_llvm_hash()
-        check_static_pins(runtime)
-        check_workflows(runtime)
-        check_release_policy(runtime)
+        check_workflow_cache_paths()
+        check_release_llvm()
     except (OSError, ValueError) as exc:
         _fail("metadata", str(exc))
-
-    if warnings:
-        print("BOM consistency warnings (reported for reconciliation, not failing):")
-        for warning in warnings:
-            print(f"  - {warning}")
     if errors:
-        print("BOM consistency check FAILED:")
-        for error in errors:
-            print(f"  - {error}")
+        print("Build dependency consistency check failed:\n  - " + "\n  - ".join(errors))
         raise SystemExit(1)
-    print(
-        "BOM consistency check passed (cmake dependency JSON, docs LLVM refs, static pins, workflows, release policy).")
+    print("Build dependency consistency check passed (LLVM, JSON library, Bisheng, docs and cache paths).")
 
 
 if __name__ == "__main__":

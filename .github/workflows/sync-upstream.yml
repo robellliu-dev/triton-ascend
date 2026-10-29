@@ -42,8 +42,6 @@ jobs:
   sync:
     runs-on: [linux-aarch64-a3-800i-4, cn12-001]
     container:
-      # Static compatibility-group pin: the maintained 8.5.0 group (a3) in
-      # cmake/ascend-runtime-info.json; validated by scripts/check_bom_consistency.py.
       image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/triton:8.5.0-a3-ubuntu22.04-py3.10-latest
     timeout-minutes: 600
     env:

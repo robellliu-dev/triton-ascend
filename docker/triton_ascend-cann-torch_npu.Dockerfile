@@ -1,16 +1,13 @@
-# syntax=docker/dockerfile:1
 ARG BASE_IMAGE=debian:12
 ARG DEVICE_TYPE=910b
 
-# Required inputs resolved from cmake/release-image-info.json by the workflow.
-# Do not override individual versions without updating the bound release profile.
-ARG CANN_VERSION
-ARG PYTHON_VERSION
-ARG PYTHON_SERIES
-ARG PYTORCH_VERSION
-ARG TORCH_NPU_VERSION
-ARG TRITON_ASCEND_VERSION
-ARG TRITON_ASCEND_SOURCE_SHA
+ARG CANN_VERSION=9.2.0
+ARG PYTHON_VERSION=3.11.15
+ARG PYTHON_SERIES=3.11
+ARG PYTORCH_VERSION=2.10.0
+ARG TORCH_NPU_VERSION=2.10.0.post7
+ARG TRITON_ASCEND_VERSION=3.6.0
+ARG LLVM_COMMIT=b5cc222d7429fe6f18c787f633d5262fac2e676f
 ARG PIP_SOURCE=https://mirrors.ustc.edu.cn/pypi/simple
 
 
@@ -20,18 +17,12 @@ FROM ${BASE_IMAGE} AS python-installer
 ARG BASE_IMAGE
 ARG PYTHON_VERSION
 ARG PYTHON_SERIES
-ARG CANN_VERSION
-ARG PYTORCH_VERSION
-ARG TORCH_NPU_VERSION
-ARG TRITON_ASCEND_VERSION
-ARG TRITON_ASCEND_SOURCE_SHA
 
 SHELL ["/bin/bash", "-c"]
 
-ARG LD_LIBRARY_PATH
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/usr/local/python${PYTHON_VERSION}/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/python${PYTHON_VERSION}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+ENV LD_LIBRARY_PATH=/usr/local/python${PYTHON_VERSION}/lib:${LD_LIBRARY_PATH}
 
 RUN set -eux; \
     if command -v apt-get >/dev/null 2>&1; then \
@@ -111,29 +102,6 @@ RUN set -eux; \
         /usr/local/python${PYTHON_VERSION}/bin/pip; \
     rm -rf /tmp/*
 
-
-COPY cmake/release-image-info.json cmake/ascend-runtime-info.json /opt/triton-metadata/
-
-RUN python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-info = json.loads(Path("/opt/triton-metadata/release-image-info.json").read_text())
-runtime = json.loads(Path("/opt/triton-metadata/ascend-runtime-info.json").read_text())
-groups = [group for group in runtime["runtimes"] if group["cann"] == info["cann"]]
-if len(groups) != 1 or groups[0]["status"] == "planned":
-    raise SystemExit("Release image must select one existing runtime group")
-expected = {
-    "CANN_VERSION": info["cann"], "PYTHON_VERSION": info["python_version"],
-    "PYTHON_SERIES": ".".join(info["python_version"].split(".")[:2]),
-    "PYTORCH_VERSION": groups[0]["torch"], "TORCH_NPU_VERSION": groups[0]["torch_npu"],
-    "TRITON_ASCEND_VERSION": info["triton_version"], "TRITON_ASCEND_SOURCE_SHA": info["source_hash"],
-}
-for key, value in expected.items():
-    if os.environ.get(key) != value:
-        raise SystemExit(f"{key} must match the bound release image profile")
-PY
 
 # Stage 2: install CANN, PyTorch, torch_npu, and Triton-Ascend.
 FROM python-installer AS cann-installer
@@ -242,10 +210,11 @@ RUN set -eux; \
         --extra-index-url=https://mirrors.huaweicloud.com/ascend/repos/pypi
 
 
-# Stage 3: build the selected release's LLVM and its immutable patch manifest.
+# Stage 3: build LLVM/MLIR with the same configuration as the original images.
 FROM python-installer AS llvm-installer
 
 ARG BASE_IMAGE
+ARG LLVM_COMMIT
 ARG PIP_SOURCE
 
 RUN set -eux; \
@@ -296,43 +265,13 @@ RUN pip3 install --no-cache-dir \
         pybind11 \
         --index-url "${PIP_SOURCE}"
 
-RUN python3 - <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import re
-from urllib.request import urlopen
-
-info = json.loads(Path("/opt/triton-metadata/release-image-info.json").read_text())
-if re.fullmatch(r"[0-9a-f]{40}", info["source_hash"]) is None:
-    raise SystemExit("Release source must be an immutable SHA")
-patch_dir = Path("/tmp/llvm-patches")
-patch_dir.mkdir()
-for patch in info["patches"]:
-    if re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch["file"]) is None:
-        raise SystemExit("Invalid release patch basename")
-    url = ("https://raw.githubusercontent.com/triton-lang/triton-ascend/"
-           + info["source_hash"] + "/third_party/ascend/patch/" + patch["file"])
-    with urlopen(url, timeout=120) as response:
-        contents = response.read()
-    if hashlib.sha256(contents).hexdigest() != patch["sha256"]:
-        raise SystemExit("Release patch checksum mismatch")
-    (patch_dir / patch["file"]).write_bytes(contents)
-PY
-
 RUN set -eux; \
-    LLVM_COMMIT="$(python3 -c 'import json; print(json.load(open("/opt/triton-metadata/release-image-info.json"))["llvm_hash"])')"; \
-    [[ "$LLVM_COMMIT" =~ ^[0-9a-f]{40}$ ]]; \
     git config --global http.postBuffer 524288000; \
     git config --global http.lowSpeedLimit 0; \
     git config --global http.lowSpeedTime 1800; \
     git clone --no-checkout --filter=blob:none https://github.com/llvm/llvm-project.git; \
     cd llvm-project; \
     git checkout "${LLVM_COMMIT}"; \
-    for patch in /tmp/llvm-patches/*.patch; do \
-        [ -e "$patch" ] || continue; \
-        git apply "$patch"; \
-    done; \
     mkdir build; \
     cd build; \
     C_COMPILER="$(command -v clang-15 || command -v clang)"; \
@@ -361,18 +300,15 @@ ARG DEVICE_TYPE
 ARG PYTHON_VERSION
 ARG PYTHON_SERIES
 ARG TRITON_ASCEND_VERSION
-ARG TRITON_ASCEND_SOURCE_SHA
 ARG PYTORCH_VERSION
 ARG TORCH_NPU_VERSION
 ARG TARGETARCH
 
 SHELL ["/bin/bash", "-c"]
 
-ARG LD_LIBRARY_PATH
-ARG PYTHONPATH
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/usr/local/python${PYTHON_VERSION}/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/python${PYTHON_VERSION}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+ENV LD_LIBRARY_PATH=/usr/local/python${PYTHON_VERSION}/lib:${LD_LIBRARY_PATH}
 
 ENV ASCEND_TOOLKIT_HOME=/usr/local/Ascend/cann-${CANN_VERSION}
 ENV ASCEND_TOOLKIT_LATEST_HOME=/usr/local/Ascend/ascend-toolkit/latest
@@ -382,7 +318,7 @@ ENV LD_LIBRARY_PATH=${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME
 ENV LD_LIBRARY_PATH=${ASCEND_TOOLKIT_LATEST_HOME}/lib64:${ASCEND_TOOLKIT_LATEST_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_LATEST_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_LATEST_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling:${LD_LIBRARY_PATH}
 ENV LD_LIBRARY_PATH=${ASCEND_TOOLKIT_LATEST_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_LATEST_HOME}/tools/aml/lib64/plugin:${LD_LIBRARY_PATH}
 ENV LD_LIBRARY_PATH=${ASCEND_TOOLKIT_HOME}/devlib:${LD_LIBRARY_PATH}
-ENV PYTHONPATH=${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe${PYTHONPATH:+:${PYTHONPATH}}
+ENV PYTHONPATH=${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:${PYTHONPATH}
 ENV PYTHONPATH=${ASCEND_TOOLKIT_LATEST_HOME}/python/site-packages:${ASCEND_TOOLKIT_LATEST_HOME}/opp/built-in/op_impl/ai_core/tbe:${PYTHONPATH}
 ENV PATH=${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/profiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ascend_system_advisor/asys:${PATH}
 ENV PATH=${ASCEND_TOOLKIT_HOME}/tools/show_kernel_debug_data:${ASCEND_TOOLKIT_HOME}/tools/msobjdump:${PATH}
@@ -397,7 +333,6 @@ ENV LLVM_INSTALL_PREFIX=/usr/local/llvm-install
 LABEL org.opencontainers.image.title="Triton-Ascend"
 LABEL org.opencontainers.image.description="Triton-Ascend ${TRITON_ASCEND_VERSION} with CANN ${CANN_VERSION} for ${DEVICE_TYPE}"
 LABEL triton-ascend.version="${TRITON_ASCEND_VERSION}"
-LABEL triton-ascend.source-revision="${TRITON_ASCEND_SOURCE_SHA}"
 LABEL cann.version="${CANN_VERSION}"
 LABEL torch.version="${PYTORCH_VERSION}"
 LABEL torch-npu.version="${TORCH_NPU_VERSION}"

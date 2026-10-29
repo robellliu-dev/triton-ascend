@@ -19,12 +19,10 @@ import glob
 import os
 import platform
 import json
-import re
 import shutil
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
 
 try:
@@ -329,22 +327,18 @@ def _ensure_npuir_sources():
 
 
 def _ensure_distributed_submodule():
-    if not check_env_flag("TRITON_BUILD_TD", "OFF"):
+    if os.getenv("TRITON_BUILD_TD", "OFF").upper() not in ["ON", "1", "YES", "TRUE", "Y"]:
         return
     distributed_dir = _REPO_ROOT / "third_party" / "ascend" / "Triton-distributed-ascend"
-    with open(_REPO_ROOT / "cmake" / "triton-distributed-info.json", encoding="utf-8") as metadata:
-        info = json.load(metadata)
-    commit_id = info["revision"]
-    if not isinstance(commit_id, str) or re.fullmatch(r"[0-9a-f]{40}", commit_id) is None:
-        raise ValueError("Triton-Distributed revision must be a full commit SHA")
+    commit_id = "82b8c919bc4f82e733e15ded7ea259aa089c9e6a"
     if not distributed_dir.is_dir():
         try:
             _git_check_call_with_retry([
                 "git",
                 "clone",
-                "--no-checkout",
-                info["repository"],
-                str(distributed_dir),
+                "https://gitcode.com/Ascend/Triton-distributed-ascend.git",
+                "-b",
+                "master",
             ], cwd=_REPO_ROOT / "third_party" / "ascend")
         except Exception:
             # A clone interrupted by a network failure leaves a partially
@@ -352,13 +346,27 @@ def _ensure_distributed_submodule():
             if distributed_dir.is_dir():
                 shutil.rmtree(distributed_dir, ignore_errors=True)
             raise
-    _add_git_safe_dir(str(distributed_dir))
-    _git_check_call_with_retry(["git", "fetch", "origin", commit_id], cwd=distributed_dir)
-    subprocess.check_call(["git", "checkout", commit_id], cwd=distributed_dir)
-    result = subprocess.run(["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True,
-                            cwd=distributed_dir)
-    if result.stdout.strip() != commit_id:
-        raise RuntimeError(f"Triton-Distributed checkout is not {commit_id}")
+    if _is_git_repo():
+        _add_git_safe_dir(str(distributed_dir))
+        _git_check_call_with_retry([
+            "git",
+            "fetch",
+            "origin",
+        ], cwd=distributed_dir)
+        subprocess.check_call([
+            "git",
+            "checkout",
+            commit_id,
+        ], cwd=distributed_dir)
+
+        result = subprocess.run([
+            "git",
+            "rev-parse",
+            "HEAD",
+        ], capture_output=True, text=True, cwd=distributed_dir)
+        current_id = result.stdout.strip()
+        if current_id != commit_id:
+            raise RuntimeError(f"Triton-Distributed submodule is not {commit_id}")
 
 
 def _copy_ascend_tools(extdir, cmake_dir):
@@ -625,36 +633,36 @@ def patch_module(mod):
     mod._ascend_is_manylinux = is_manylinux
 
 
-@contextmanager
 def _robust_open_url(url, retries=5):
-    """Yield a downloaded stream, cleaning its temporary archive on exit.
+    """Download ``url`` fully to a temp file with resumable retries.
 
-    Keep resumable curl retries for Ascend artifacts. Both setup.py callers
-    use the response as a context manager; archive ownership lasts until
-    that context exits, including extraction failures.
+    The prebuilt LLVM tarballs are ~1.2 GB. The upstream setup.py streams
+    them via urllib with a 300 s timeout and no retry: OBS serves large
+    objects at ~2.5 MB/s per connection, so every download exceeds the
+    timeout (or gets cut) and the build dies — systematically, on every
+    job. Use curl with `-C -` so each attempt resumes from the bytes
+    already on disk instead of restarting.
     """
+    import subprocess
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="triton-ascend-download-") as directory:
-        archive = Path(directory) / "archive"
-        last_error = None
-        for attempt in range(1, retries + 1):
-            proc = subprocess.run(
-                [
-                    "curl", "-fsSL", "-C", "-", "--retry", "2", "--retry-all-errors", "--connect-timeout", "30",
-                    "--max-time", "1000", "-o",
-                    str(archive), url
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            if proc.returncode == 0:
-                with archive.open("rb") as response:
-                    yield response
-                return
-            last_error = proc.stderr.decode(errors="replace")[-300:]
-            print(f"[setup_patch] download of {url} attempt {attempt}/{retries} failed: {last_error}")
-        raise RuntimeError(f"download failed after {retries} attempts: {last_error}")
+    tmp = tempfile.NamedTemporaryFile(delete=False)
+    tmp.close()
+    last_error = None
+    for attempt in range(1, retries + 1):
+        proc = subprocess.run(
+            [
+                "curl", "-fsSL", "-C", "-", "--retry", "2", "--retry-all-errors", "--connect-timeout", "30",
+                "--max-time", "1000", "-o", tmp.name, url
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if proc.returncode == 0:
+            return open(tmp.name, "rb")
+        last_error = proc.stderr.decode(errors="replace")[-300:]
+        print(f"[setup_patch] download of {url} attempt {attempt}/{retries} failed: {last_error}")
+    raise RuntimeError(f"download failed after {retries} attempts: {last_error}")
 
 
 def _build_setup_kwargs(mod, kwargs):

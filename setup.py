@@ -47,8 +47,8 @@ from third_party.ascend.build import prepare as _ascend_prepare
 
 _ascend_prepare()
 
-from python.build_helpers import (Package, check_env_flag, get_base_dir, get_cmake_dir, get_json_package_info,
-                                  get_llvm_package_info)
+from python.build_helpers import (Package as Package, check_env_flag, get_base_dir, get_cmake_dir,
+                                  get_json_package_info, get_llvm_package_info)
 
 
 def is_git_repo():

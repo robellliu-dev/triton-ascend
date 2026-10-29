@@ -5,7 +5,6 @@ on:
     paths:
       - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - cmake/ascend-runtime-info.json
       - python/build_helpers.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
@@ -13,7 +12,6 @@ on:
     paths:
       - cmake/llvm-info.json
       - third_party/ascend/patch/llvm_patch_*.patch
-      - cmake/ascend-runtime-info.json
       - python/build_helpers.py
       - .github/workflows/llvm-build.yml
       - .github/workflows/build/almalinux.Dockerfile
@@ -32,41 +30,13 @@ permissions:
 
 jobs:
 
-  deps:
-    runs-on: ubuntu-latest
-    outputs:
-      cann: ${{ steps.deps.outputs.cann }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
-      - name: Resolve pinned CANN version from the BOM
-        id: deps
-        shell: python
-        run: |
-          import json
-          import os
-          import re
-          with open("cmake/ascend-runtime-info.json") as stream:
-              runtime = json.load(stream)
-          cann = runtime["default_cann"]
-          if not isinstance(cann, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", cann) is None:
-              raise SystemExit("Invalid default CANN version")
-          groups = [group for group in runtime["runtimes"] if group["cann"] == cann]
-          if len(groups) != 1 or groups[0]["status"] not in {"main", "maintained", "early-access"}:
-              raise SystemExit("Default CANN must select exactly one active runtime")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              print(f"cann={cann}", file=output)
-
   build:
-    needs: deps
     name: Build on ${{ matrix.config.runner }}
     runs-on: ${{ matrix.config.runs_on }}
     # Cann container provides buildx remote builder config for AlmaLinux.
     # Ubuntu native builds also work inside this container.
     container:
-      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/cann:${{ needs.deps.outputs.cann }}-a3-ubuntu22.04-py3.12
+      image: swr.cn-southwest-2.myhuaweicloud.com/base_image/ascend-ci/cann:9.0.0-a3-ubuntu22.04-py3.12
     timeout-minutes: 240
     env:
       PIP_INDEX_URL: http://cache-service.nginx-pypi-cache.svc.cluster.local/pypi/simple
