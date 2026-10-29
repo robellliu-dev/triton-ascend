@@ -1,0 +1,136 @@
+import json
+import hashlib
+import io
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import textwrap
+import urllib.request
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("mutation", ["valid", "changed-release", "post-release", "bad-sha", "bad-cann", "missing"])
+def test_release_workflow_reads_bound_image_inputs(tmp_path, mutation):
+    text = (REPO / ".github/workflows/release-docker-images-nightly.yml").read_text(encoding="utf-8")
+    match = re.search(r"(?m)^        shell: python\n        run: \|\n((?:          .*\n|\n)+)", text)
+    assert match is not None, "Release workflow needs a real metadata resolver"
+    script = textwrap.dedent(match.group(1))
+    metadata = tmp_path / "cmake"
+    metadata.mkdir()
+    data = {
+        "schema_version": 1,
+        "triton_version": "3.6.0",
+        "source_hash": "a" * 40,
+        "llvm_hash": "b" * 40,
+        "patches": [],
+        "cann": "9.2.0",
+        "python_version": "3.11.15",
+        "torch": "2.10.0",
+        "torch_npu": "2.10.0.post7",
+    }
+    if mutation == "changed-release":
+        data.update(triton_version="4.0.0", source_hash="c" * 40, python_version="3.12.1")
+        data.update(torch="2.11.0", torch_npu="2.11.0.post1")
+    elif mutation == "bad-sha":
+        data["source_hash"] = "main"
+    elif mutation == "post-release":
+        data["triton_version"] = "3.6.0.post1"
+    elif mutation == "bad-cann":
+        data["cann"] = "not-a-version"
+    if mutation != "missing":
+        (metadata / "release-image-info.json").write_text(json.dumps(data))
+    output = tmp_path / "output"
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
+                            env={**os.environ, "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
+    if mutation in {"valid", "changed-release", "post-release"}:
+        assert result.returncode == 0, result.stderr
+        image = json.loads(output.read_text().removeprefix("image="))
+        assert image["triton_version"] == data["triton_version"]
+        assert image["source_hash"] == data["source_hash"]
+        assert image["llvm_hash"] == data["llvm_hash"]
+        assert image["python_series"] == ".".join(data["python_version"].split(".")[:2])
+        assert image["torch_npu"] == data["torch_npu"]
+    else:
+        assert result.returncode != 0
+        assert not output.exists()
+
+
+def test_release_recipe_uses_a_bound_manifest_instead_of_an_independent_llvm_argument():
+    workflow = (REPO / ".github/workflows/release-docker-images-nightly.yml").read_text(encoding="utf-8")
+    path = re.search(r"(?m)^          file: (.+)$", workflow).group(1).strip()
+    assert (REPO / path).is_file(), "Nightly must reference an existing Dockerfile"
+    recipe = (REPO / path).read_text()
+    assert not re.search(r"(?m)^ARG LLVM_COMMIT(?:=|$)", recipe)
+    assert "release-image-info.json" in recipe
+    assert 'git checkout "${LLVM_COMMIT}"' in recipe
+    assert 'git apply "$patch"' in recipe
+    assert "TRITON_ASCEND_SOURCE_SHA" in recipe
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_actual_docker_release_arguments_cannot_drift(tmp_path, monkeypatch, mismatch):
+    text = (REPO / "docker/triton_ascend-cann-torch_npu.Dockerfile").read_text()
+    scripts = re.findall(r"RUN python3 - <<'PY'\n(.*?)\nPY", text, re.DOTALL)
+    assert len(scripts) == 2
+    info = json.loads((REPO / "cmake/release-image-info.json").read_text())
+    (tmp_path / "release-image-info.json").write_text(json.dumps(info))
+    values = {
+        "CANN_VERSION": info["cann"],
+        "PYTHON_VERSION": info["python_version"],
+        "PYTHON_SERIES": ".".join(info["python_version"].split(".")[:2]),
+        "PYTORCH_VERSION": info["torch"],
+        "TORCH_NPU_VERSION": info["torch_npu"],
+        "TRITON_ASCEND_VERSION": info["triton_version"],
+        "TRITON_ASCEND_SOURCE_SHA": info["source_hash"],
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    if mismatch:
+        monkeypatch.setenv("TRITON_ASCEND_SOURCE_SHA", "b" * 40)
+    script = scripts[0].replace("/opt/triton-metadata", tmp_path.as_posix())
+    if mismatch:
+        with pytest.raises(SystemExit, match="TRITON_ASCEND_SOURCE_SHA"):
+            exec(script, {})
+    else:
+        exec(script, {})
+
+
+@pytest.mark.parametrize("valid_checksum", [False, True])
+def test_actual_docker_patch_download_uses_release_sha_and_checks_contents(tmp_path, monkeypatch, valid_checksum):
+    text = (REPO / "docker/triton_ascend-cann-torch_npu.Dockerfile").read_text()
+    scripts = re.findall(r"RUN python3 - <<'PY'\n(.*?)\nPY", text, re.DOTALL)
+    assert len(scripts) == 2
+    contents = b"release patch contents"
+    info = {
+        "source_hash":
+        "a" * 40, "patches": [{
+            "file": "llvm_patch_release.patch", "sha256":
+            hashlib.sha256(contents).hexdigest() if valid_checksum else "0" * 64
+        }]
+    }
+    (tmp_path / "release-image-info.json").write_text(json.dumps(info))
+    urls = []
+
+    def download(url, **kwargs):
+        urls.append(url)
+        return io.BytesIO(contents)
+
+    monkeypatch.setattr(urllib.request, "urlopen", download)
+    script = scripts[1].replace("/opt/triton-metadata", tmp_path.as_posix())
+    script = script.replace("/tmp/llvm-patches", (tmp_path / "patches").as_posix())
+    if valid_checksum:
+        exec(script, {})
+        assert (tmp_path / "patches/llvm_patch_release.patch").read_bytes() == contents
+    else:
+        with pytest.raises(SystemExit, match="checksum mismatch"):
+            exec(script, {})
+        assert not list((tmp_path / "patches").iterdir())
+    assert urls == [
+        "https://raw.githubusercontent.com/triton-lang/triton-ascend/" + "a" * 40 +
+        "/third_party/ascend/patch/llvm_patch_release.patch"
+    ]
