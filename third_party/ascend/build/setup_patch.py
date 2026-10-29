@@ -56,17 +56,13 @@ def _is_git_repo():
 
 def _get_llvm_patch_hash():
     patch_dir = _REPO_ROOT / "third_party" / "ascend" / "patch"
-    if patch_dir.is_dir():
-        patch_files = sorted(f for f in os.listdir(patch_dir)
-                             if f.startswith("llvm_patch_") and f.endswith(".patch") and (patch_dir / f).is_file())
-    else:
-        patch_files = []
+    patch_files = sorted(path for path in patch_dir.glob("llvm_patch_*.patch") if path.is_file())
     if not patch_files:
         return "00000000"
     import hashlib
     h = hashlib.sha256()
-    for pf in patch_files:
-        h.update((patch_dir / pf).read_bytes())
+    for patch in patch_files:
+        h.update(patch.read_bytes())
     return h.hexdigest()[:8]
 
 

@@ -60,51 +60,30 @@ def is_linux_os(id):
 
 
 def get_llvm_system_suffix():
+    if env_system_suffix := os.environ.get("TRITON_LLVM_SYSTEM_SUFFIX"):
+        return env_system_suffix
     system = platform.system()
-    try:
-        arch = {"x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}[platform.machine()]
-    except KeyError:
-        arch = platform.machine()
-    if (env_system_suffix := os.environ.get("TRITON_LLVM_SYSTEM_SUFFIX", None)):
-        system_suffix = env_system_suffix
-    elif system == "Darwin":
-        system_suffix = f"macos-{arch}"
-    elif system == "Linux":
-        if arch == 'arm64' and is_linux_os('almalinux'):
-            system_suffix = 'almalinux-arm64'
-        elif arch == 'arm64':
-            system_suffix = 'ubuntu-arm64'
-        elif arch == 'x64':
-            vglibc = tuple(map(int, platform.libc_ver()[1].split('.')))
-            vglibc = vglibc[0] * 100 + vglibc[1]
-            if vglibc > 228:
-                # Ubuntu 24 LTS (v2.39)
-                # Ubuntu 22 LTS (v2.35)
-                # Ubuntu 20 LTS (v2.31)
-                system_suffix = "ubuntu-x64"
-            else:
-                # Manylinux_2.28 (v2.28)
-                # AlmaLinux 8 (v2.28)
-                system_suffix = "almalinux-x64"
-        else:
-            print(
-                f"LLVM pre-compiled image is not available for {system}-{arch}. Proceeding with user-configured LLVM from source build."
-            )
-            return None
-    else:
-        print(
-            f"LLVM pre-compiled image is not available for {system}-{arch}. Proceeding with user-configured LLVM from source build."
-        )
-        return None
-    return system_suffix
+    machine = platform.machine()
+    arch = {"x86_64": "x64", "aarch64": "arm64"}.get(machine, machine)
+    if system == "Darwin":
+        return f"macos-{arch}"
+    if system == "Linux":
+        if arch == "arm64":
+            return "almalinux-arm64" if is_linux_os("almalinux") else "ubuntu-arm64"
+        if arch == "x64":
+            major, minor, *_ = map(int, platform.libc_ver()[1].split("."))
+            # Ubuntu artifacts need glibc > 2.28; otherwise use AlmaLinux.
+            return "ubuntu-x64" if major * 100 + minor > 228 else "almalinux-x64"
+    print(
+        f"LLVM pre-compiled image is not available for {system}-{arch}. Proceeding with user-configured LLVM from source build."
+    )
+    return None
 
 
 def get_llvm_package_info():
     system_suffix = get_llvm_system_suffix()
     if system_suffix is None:
         return Package("llvm", "LLVM-C.lib", "", "LLVM_INCLUDE_DIRS", "LLVM_LIBRARY_DIR", "LLVM_SYSPATH")
-    # use_assert_enabled_llvm = check_env_flag("TRITON_USE_ASSERT_ENABLED_LLVM", "False")
-    # release_suffix = "assert" if use_assert_enabled_llvm else "release"
     llvm_info_path = os.path.join(get_base_dir(), "cmake", "llvm-info.json")
     with open(llvm_info_path, "r") as llvm_info_file:
         llvm_info = json.load(llvm_info_file)

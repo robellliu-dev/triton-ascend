@@ -79,18 +79,15 @@ jobs:
     - name: Compute Patch Hash
       shell: bash
       run: |
-        PATCH_DIR="third_party/ascend/patch"
-        if [ -d "${PATCH_DIR}" ] && find "${PATCH_DIR}" -maxdepth 1 -type f -name 'llvm_patch_*.patch' -print -quit | grep -q .; then
-          PATCH_HASH=$(
-            LC_ALL=C find "${PATCH_DIR}" -maxdepth 1 -type f -name 'llvm_patch_*.patch' -print0 \
-              | sort -z \
-              | xargs -0 cat \
-              | sha256sum \
-              | cut -d' ' -f1 \
-              | cut -c1-8
-          )
-        else
-          PATCH_HASH="00000000"
+        export LC_ALL=C
+        PATCH_FILES=()
+        for patch in third_party/ascend/patch/llvm_patch_*.patch; do
+          [ -f "$patch" ] || continue
+          PATCH_FILES+=("$patch")
+        done
+        PATCH_HASH="00000000"
+        if [ "${#PATCH_FILES[@]}" -gt 0 ]; then
+          PATCH_HASH=$(cat "${PATCH_FILES[@]}" | sha256sum | cut -c1-8)
         fi
         echo "Patch hash: ${PATCH_HASH}"
         echo "patch_hash=${PATCH_HASH}" >> "${GITHUB_ENV}"
@@ -109,17 +106,12 @@ jobs:
     - name: Apply LLVM patches
       shell: bash
       run: |
-        PATCH_DIR="third_party/ascend/patch"
-        if [ -d "${PATCH_DIR}" ]; then
-          cd llvm-project
-          for patchfile in "${GITHUB_WORKSPACE}/${PATCH_DIR}"/llvm_patch_*.patch; do
-            if [ -f "$patchfile" ]; then
-              echo "Applying $patchfile..."
-              git apply "$patchfile"
-            fi
-          done
-          cd ..
-        fi
+        export LC_ALL=C
+        for patchfile in third_party/ascend/patch/llvm_patch_*.patch; do
+          [ -f "$patchfile" ] || continue
+          echo "Applying $patchfile..."
+          git -C llvm-project apply "${GITHUB_WORKSPACE}/${patchfile}"
+        done
 
     - name: Install Prerequisites
       shell: bash
