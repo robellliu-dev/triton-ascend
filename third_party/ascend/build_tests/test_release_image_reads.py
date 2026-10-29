@@ -180,3 +180,53 @@ def test_actual_docker_patch_download_uses_release_sha_and_checks_contents(tmp_p
         "https://raw.githubusercontent.com/triton-lang/triton-ascend/" + "a" * 40 +
         "/third_party/ascend/patch/llvm_patch_release.patch"
     ]
+
+
+@pytest.mark.parametrize("mode", ["create", "fallback", "missing-arm"])
+@pytest.mark.parametrize("suffix", ["", "nightly"])
+def test_manifest_step_derives_tags_without_an_intermediate_output(tmp_path, mode, suffix):
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
+    if bash is None:
+        pytest.skip("Bash is required")
+    workflow = (REPO / ".github/workflows/release-docker-images-nightly.yml").read_text(encoding="utf-8")
+    step = workflow.split("      - name: Create multi-arch manifest\n", 1)[1]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    wrapper = r'''
+docker() {
+  printf '%s\n' "$*" >> "$CALLS"
+  case "$*" in
+    "buildx imagetools inspect "*"-arm64") [ "$MODE" != missing-arm ] ;;
+    "buildx imagetools create "*) [ "$MODE" != fallback ] ;;
+  esac
+}
+'''
+    script_path = tmp_path / "manifest.sh"
+    script_path.write_text(wrapper + script, encoding="utf-8", newline="\n")
+    calls = tmp_path / "calls"
+    env = {
+        **os.environ, "CALLS": calls.as_posix(), "MODE": mode, "IMAGE_REPOSITORY": "registry.example/triton",
+        "TRITON_ASCEND_VERSION": "3.6.0", "CANN_VERSION": "9.2.0", "TORCH_NPU_VERSION": "2.10.0.post7", "PYTHON_SERIES":
+        "3.11", "DEVICE_TYPE": "a3", "OS_NAME": "ubuntu24.04", "TAG_SUFFIX": suffix
+    }
+    env.pop("BASE_TAG", None)
+    result = subprocess.run([bash, script_path.as_posix()], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert calls.is_file(), result.stderr
+    commands = calls.read_text().splitlines()
+    base = "registry.example/triton:3.6.0-cann9.2.0-torch_npu2.10.0.post7-a3-ubuntu24.04-py3.11"
+    assert commands[:2] == [f"buildx imagetools inspect {base}-amd64", f"buildx imagetools inspect {base}-arm64"]
+    if mode == "missing-arm":
+        assert result.returncode != 0
+        assert len(commands) == 2, "Do not publish if an architecture is missing"
+    else:
+        assert result.returncode == 0, result.stderr
+        destinations = [base, base + "-" + suffix] if suffix else [base]
+        tags = " ".join("-t " + destination for destination in destinations)
+        assert commands[2] == f"buildx imagetools create {tags} {base}-amd64 {base}-arm64"
+        expected_fallback = []
+        if mode == "fallback":
+            for destination in destinations:
+                expected_fallback += [
+                    f"manifest create --amend {destination} {base}-amd64 {base}-arm64", f"manifest push {destination}"
+                ]
+        assert commands[3:] == expected_fallback

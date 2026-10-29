@@ -23,7 +23,6 @@ concurrency:
 
 env:
   # 华为云 SWR 镜像仓库。
-  REGISTRY: swr.cn-north-4.myhuaweicloud.com
   IMAGE_REPOSITORY: swr.cn-north-4.myhuaweicloud.com/opentile/triton
 
 jobs:
@@ -184,19 +183,15 @@ jobs:
           access-key-id: ${{ secrets.HUAWEI_CLOUD_AK }}
           access-key-secret: ${{ secrets.HUAWEI_CLOUD_SK }}
 
-      - name: Generate image tag
-        id: tags
-        run: |
-          base_tag="${TRITON_ASCEND_VERSION}-cann${CANN_VERSION}-torch_npu${TORCH_NPU_VERSION}-${{ matrix.device_type }}-${{ matrix.os.name }}-py${PYTHON_SERIES}"
-          echo "base_tag=${base_tag}" >> "${GITHUB_OUTPUT}"
-
       - name: Create multi-arch manifest
         shell: bash
         env:
-          BASE_TAG: ${{ steps.tags.outputs.base_tag }}
+          DEVICE_TYPE: ${{ matrix.device_type }}
+          OS_NAME: ${{ matrix.os.name }}
         run: |
           set -euo pipefail
 
+          BASE_TAG="${TRITON_ASCEND_VERSION}-cann${CANN_VERSION}-torch_npu${TORCH_NPU_VERSION}-${DEVICE_TYPE}-${OS_NAME}-py${PYTHON_SERIES}"
           amd64_image="${IMAGE_REPOSITORY}:${BASE_TAG}-amd64"
           arm64_image="${IMAGE_REPOSITORY}:${BASE_TAG}-arm64"
           final_image="${IMAGE_REPOSITORY}:${BASE_TAG}"
