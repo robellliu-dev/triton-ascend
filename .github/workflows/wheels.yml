@@ -33,21 +33,17 @@ jobs:
     outputs:
       branch: ${{ steps.refs.outputs.branch }}
     steps:
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
       - name: Select wheel source ref
         id: refs
-        shell: python
+        shell: bash
         run: |
-          import json
-          import os
-          event = os.environ.get("GITHUB_EVENT_NAME", "")
-          ref = os.environ.get("GITHUB_REF_NAME", "main") if event in {"push", "workflow_dispatch"} else "main"
-          branch = [{"ref": ref, "tag": ref.replace("/", "-"),
-                     "local": "release" if ref.startswith("release/") else "dev", "npuir": "OFF"}]
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              print("branch=" + json.dumps(branch, separators=(",", ":")), file=output)
+          ref=main
+          case "${GITHUB_EVENT_NAME:-}" in
+            push|workflow_dispatch) ref="${GITHUB_REF_NAME:-main}" ;;
+          esac
+          branch=$(jq -cn --arg ref "$ref" '[{ref: $ref, tag: ($ref | gsub("/"; "-")),
+            local: (if $ref | startswith("release/") then "release" else "dev" end), npuir: "OFF"}]')
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
 
   Build-Wheels:
     needs: deps

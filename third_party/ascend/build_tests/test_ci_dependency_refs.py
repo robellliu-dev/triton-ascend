@@ -13,14 +13,20 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize("event,ref", [("push", "release/3.6.0"), ("workflow_dispatch", "release/3.2.2"),
+                                       ("push", "main"), ("workflow_dispatch", "feature/quote'and\"double"),
                                        ("schedule", "main"), ("pull_request", "123/merge")])
 def test_wheel_matrix_tracks_the_requested_source(tmp_path, event, ref):
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
+    if bash is None or shutil.which("jq") is None:
+        pytest.skip("Bash and jq are required")
     text = (REPO / ".github/workflows/wheels.yml").read_text(encoding="utf-8")
-    match = re.search(r"(?m)^        shell: python\n        run: \|\n((?:          .*\n|\n)+)", text)
+    step = text.split("      - name: Select wheel source ref\n", 1)[1].split("\n  Build-Wheels:", 1)[0]
+    match = re.search(r"        run: \|\n((?:          .*\n|\n)+)", step)
     script = textwrap.dedent(match.group(1))
     output = tmp_path / "output"
     result = subprocess.run(
-        [sys.executable, "-c", script], cwd=tmp_path,
+        [bash, "-e", "-o", "pipefail", "-c", script], cwd=tmp_path,
         env={**os.environ, "GITHUB_EVENT_NAME": event, "GITHUB_REF_NAME": ref, "GITHUB_OUTPUT":
              str(output)}, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -30,6 +36,7 @@ def test_wheel_matrix_tracks_the_requested_source(tmp_path, event, ref):
     expected = "main" if event in {"schedule", "pull_request"} else ref
     assert branch["ref"] == expected
     assert branch["tag"] == expected.replace("/", "-")
+    assert branch["local"] == ("release" if expected.startswith("release/") else "dev")
     assert text.count('branch: ${{ fromJSON(needs.deps.outputs.branch) }}') == 2
     build = text.split("  Build-Wheels:\n", 1)[1].split("  Test-Wheels:\n", 1)[0]
     assert build.index("uses: actions/setup-python@v6") < build.index("fetch-npuir-stable.sh --resolve-only")

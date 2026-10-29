@@ -11,7 +11,8 @@ remain available, and metadata parsing requires Python 3. The wheel job prepares
 that interpreter before invoking the script.
 
 Wheel build, test and publication share the selected push/manual source ref and
-artifact tag. Pull requests explicitly select the head commit. Post-submit
+artifact tag. The Ubuntu ref-selection job uses Bash and jq, without preparing
+an extra Python interpreter. Pull requests explicitly select the head commit. Post-submit
 throttling queries the current branch and CI workflow filename.
 
 These settings do not define a complete runtime compatibility matrix or certify
