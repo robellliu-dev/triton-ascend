@@ -119,10 +119,6 @@ jobs:
           # matrix branches (the payload no longer depends on the triton-ascend
           # branch). Cached on the shared-volume PVC (/root/.cache).
           NPUIR_SHA=$(bash .github/workflows/build/fetch-npuir-stable.sh --resolve-only)
-          if [ -z "$NPUIR_SHA" ]; then
-            echo "::error::cannot resolve AscendNPU-IR stable HEAD from gitcode"
-            exit 1
-          fi
           echo "AscendNPU-IR stable HEAD: ${NPUIR_SHA}"
           echo "npuir_sha=${NPUIR_SHA}" >> "$GITHUB_OUTPUT"
           CACHE_DIR="/root/.cache/npuir-payload/${NPUIR_SHA}-${{ matrix.config.arch }}"
@@ -145,8 +141,7 @@ jobs:
             echo "npuir payload cache hit: ${CACHE_DIR}"
             rm -rf .npuir-payload
             mkdir -p .npuir-payload
-            cp -a "${CACHE_DIR}/bin" .npuir-payload/
-            cp -a "${CACHE_DIR}/lib" .npuir-payload/
+            cp -a "${CACHE_DIR}"/{bin,lib} .npuir-payload/
             chmod -R a+x .npuir-payload/bin
             echo "cache_hit=true" >> "$GITHUB_OUTPUT"
           else
@@ -223,27 +218,20 @@ jobs:
           echo "Using npuir-build payload at ${PAYLOAD_DIR}"
           rm -rf .npuir-payload
           mkdir -p .npuir-payload
-          cp -a "${PAYLOAD_DIR}/bin" .npuir-payload/
-          cp -a "${PAYLOAD_DIR}/lib" .npuir-payload/
+          cp -a "${PAYLOAD_DIR}"/{bin,lib} .npuir-payload/
           # GitHub artifact zips carry no unix permission bits (upload-artifact
           # zips without setUnixMode) and action-download-artifact extracts
           # via adm-zip as 0644, so restore the exec bit explicitly.
           chmod -R a+x .npuir-payload/bin
-          # Only an artifact with the expected source identity reaches this point.
-          # Seed the shared-volume PVC cache atomically (write a per-process
-          # temp dir, then mv) so the next run skips the slow download and the
-          # concurrent same-arch jobs (same key, identical content) never
-          # clobber each other's temp or expose a half-written dir.
+          # Stage complete contents before replacing the old cache entry.
+          # Readers validate its SHA and may miss during the replacement.
           CACHE_DIR="${{ steps.npuir-cache.outputs.cache_dir }}"
           TMP_DIR="${CACHE_DIR}.tmp.$$"
           rm -rf "${TMP_DIR}"
           mkdir -p "${TMP_DIR}"
-          cp -a .npuir-payload/bin "${TMP_DIR}/"
-          cp -a .npuir-payload/lib "${TMP_DIR}/"
-          # Mark the entry with its source SHA (HAVE == WANT inside this
-          # branch) so the restore step can validate it on later runs.
+          cp -a .npuir-payload/{bin,lib} "${TMP_DIR}/"
+          # Record the verified source SHA for later cache readers.
           cp "${PAYLOAD_DIR}/npuir-sha.txt" "${TMP_DIR}/npuir-sha.txt"
-          chmod -R a+x "${TMP_DIR}/bin"
           rm -rf "${CACHE_DIR}"
           mv "${TMP_DIR}" "${CACHE_DIR}"
           echo "Saved npuir payload to local cache ${CACHE_DIR}"

@@ -43,7 +43,7 @@ def test_wheel_matrix_tracks_the_requested_source(tmp_path, event, ref):
     assert "github.event.pull_request.head.sha || matrix.branch.ref" in build
 
 
-@pytest.mark.parametrize("mode", ["metadata", "override", "invalid-json"])
+@pytest.mark.parametrize("mode", ["metadata", "override", "invalid-json", "empty-remote"])
 def test_npuir_resolution_uses_metadata_without_changing_the_destination(tmp_path, mode):
     git_bash = Path("C:/Program Files/Git/bin/bash.exe")
     bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
@@ -65,12 +65,17 @@ def test_npuir_resolution_uses_metadata_without_changing_the_destination(tmp_pat
     if mode == "override":
         env.update(NPUIR_REPO_URL="https://override.invalid/npuir.git", NPUIR_REPO_BRANCH="release")
     wrapper = 'git() { printf "%s\\n" "$*" >&2; printf "%s\\tref\\n" ' + "a" * 40 + '; }; export -f git; '
+    if mode == "empty-remote":
+        wrapper = 'git() { printf "%s\\n" "$*" >&2; }; export -f git; '
     result = subprocess.run([bash, "-c", wrapper + 'bash "$1" --resolve-only', "test",
                              script.as_posix()], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=10)
     assert sentinel.read_text() == "existing source"
-    if mode == "invalid-json":
+    if mode in {"invalid-json", "empty-remote"}:
         assert result.returncode != 0
-        assert "ls-remote" not in result.stderr
+        if mode == "invalid-json":
+            assert "ls-remote" not in result.stderr
+        else:
+            assert "could not resolve" in result.stderr
     else:
         assert result.returncode == 0, result.stderr
         assert result.stdout == "a" * 40 + "\n"
@@ -126,3 +131,7 @@ def test_wheel_payload_must_match_the_resolved_source(tmp_path, source):
     assert result.returncode == 0, result.stderr
     assert output.read_text().strip() == "build_npuir=" + ("OFF" if source == "matching" else "ON")
     assert (tmp_path / ".npuir-payload").exists() == (source == "matching")
+    if source == "matching":
+        assert (tmp_path / "cache/bin/bishengir-compile").read_text() == "fixture"
+        assert (tmp_path / "cache/lib/compiler.so").read_text() == "fixture"
+        assert (tmp_path / "cache/npuir-sha.txt").read_text() == "a" * 40
