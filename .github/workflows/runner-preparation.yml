@@ -35,6 +35,7 @@ jobs:
         with:
           files: |
             cmake/*.txt
+            cmake/*.json
       - name: Detect if enough time has passed since last post-submit run
         id: detect-time
         if: github.event_name == 'push'
