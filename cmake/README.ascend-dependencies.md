@@ -16,6 +16,9 @@ AlmaLinux ABI exception stay in `third_party/ascend/build/setup_patch.py`.
 Explicit toolchain paths and offline behavior retain their existing roles.
 CMake continues to discover installed LLVM/MLIR configs and JSON includes.
 No generic reader, generated mirror or metadata-only CMake module is required.
+Workflow shell steps use `jq -er` for metadata fields. The LLVM container
+installs jq before reading its pin. Python packaging and developer commands
+use the Python standard library, without adding a jq dependency there.
 
 `scripts/check_bom_consistency.py` audits these declared inputs, local patch
 names/contents, the four installation sources, the main release-policy LLVM/patch

@@ -62,10 +62,9 @@ jobs:
         sed -i 's|http://ports.ubuntu.com|http://cache-service.nginx-pypi-cache.svc.cluster.local:8081|g' /etc/apt/sources.list 2>/dev/null || true
         sed -i 's|http://security.ubuntu.com|http://cache-service.nginx-pypi-cache.svc.cluster.local:8081|g' /etc/apt/sources.list 2>/dev/null || true
         apt-get update
-        # Every target runs in the Ubuntu CANN container, including AlmaLinux
-        # buildx targets. Bootstrap the metadata reader before resolving its pin.
-        apt-get install -y --no-install-recommends python3 python3-pip
-        python3 -m pip --version
+        # AlmaLinux targets also run in this Ubuntu container before buildx.
+        # jq reads metadata; Python/pip install the build prerequisites below.
+        apt-get install -y --no-install-recommends jq python3 python3-pip
         if [ "${{ matrix.config.target-os }}" = 'ubuntu' ]; then
           apt-get install -y --no-install-recommends clang lld
         fi
@@ -73,14 +72,9 @@ jobs:
     - name: Fetch LLVM Commit Hash
       shell: bash
       run: |
-        command -v python3 >/dev/null || { echo "Python 3 is required to resolve LLVM metadata" >&2; exit 1; }
-        LLVM_COMMIT_HASH="$(python3 -c 'import json; print(json.load(open("cmake/llvm-info.json"))["llvm_hash"])')"
-        echo "Found LLVM commit hash: ${LLVM_COMMIT_HASH}"
-        echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" >> "${GITHUB_ENV}"
-
-        SHORT_LLVM_COMMIT_HASH="${LLVM_COMMIT_HASH:0:8}"
-        echo "Short LLVM commit hash: ${SHORT_LLVM_COMMIT_HASH}"
-        echo "short_llvm_commit_hash=${SHORT_LLVM_COMMIT_HASH}" >> "${GITHUB_ENV}"
+        LLVM_COMMIT_HASH=$(jq -er '.llvm_hash | strings | select(test("^[0-9a-fA-F]{40}$"))' cmake/llvm-info.json)
+        echo "llvm_commit_hash=${LLVM_COMMIT_HASH}" | tee -a "$GITHUB_ENV"
+        echo "short_llvm_commit_hash=${LLVM_COMMIT_HASH:0:8}" | tee -a "$GITHUB_ENV"
 
     - name: Compute Patch Hash
       shell: bash
