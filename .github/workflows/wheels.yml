@@ -7,17 +7,16 @@ on:
   pull_request:
     paths:
       - .github/workflows/wheels.yml
+      - cmake/triton-distributed-info.json
+      - cmake/npuir-info.json
+      - .github/workflows/build/fetch-npuir-stable.sh
+      - third_party/ascend/build/setup_patch.py
       - .github/workflows/build/wheels.Dockerfile
       - setup.py
       - pyproject.toml
       - version.txt
       - cmake/llvm-hash.txt
       - cmake/json-version.txt
-      - cmake/triton-distributed-info.json
-      - cmake/npuir-info.json
-      - .github/workflows/build/fetch-npuir-stable.sh
-      - third_party/ascend/build/**
-      - third_party/ascend/patch/llvm_patch_*.patch
   schedule:
     - cron: "0 8 * * *"
 
