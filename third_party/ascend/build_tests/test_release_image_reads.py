@@ -4,8 +4,8 @@ import io
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
-import sys
 import textwrap
 import urllib.request
 
@@ -14,10 +14,19 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("mutation", ["valid", "changed-release", "post-release", "bad-sha", "bad-cann", "missing"])
+@pytest.mark.parametrize("mutation", [
+    "valid", "valid-patch", "changed-release", "post-release", "bad-sha", "bad-llvm", "bad-cann", "bad-python",
+    "schema", "extra", "missing-field", "null", "bad-patches", "bad-patch-path", "bad-checksum", "duplicate-patch",
+    "unsorted-patches", "missing", "invalid-json", "multiple", "empty", "trailing-newline"
+])
 def test_release_workflow_reads_bound_image_inputs(tmp_path, mutation):
+    git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+    bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
+    if bash is None or shutil.which("jq") is None:
+        pytest.skip("Bash and jq are required")
     text = (REPO / ".github/workflows/release-docker-images-nightly.yml").read_text(encoding="utf-8")
-    match = re.search(r"(?m)^        shell: python\n        run: \|\n((?:          .*\n|\n)+)", text)
+    step = text.split("      - name: Resolve release image inputs\n", 1)[1].split("\n  build:", 1)[0]
+    match = re.search(r"        run: \|\n((?:          .*\n|\n)+)", step)
     assert match is not None, "Release workflow needs a real metadata resolver"
     script = textwrap.dedent(match.group(1))
     metadata = tmp_path / "cmake"
@@ -42,12 +51,49 @@ def test_release_workflow_reads_bound_image_inputs(tmp_path, mutation):
         data["triton_version"] = "3.6.0.post1"
     elif mutation == "bad-cann":
         data["cann"] = "not-a-version"
+    elif mutation == "trailing-newline":
+        data["cann"] += "\n"
+    elif mutation == "bad-llvm":
+        data["llvm_hash"] = "main"
+    elif mutation == "bad-python":
+        data["python_version"] = "3.11"
+    elif mutation == "schema":
+        data["schema_version"] = True
+    elif mutation == "extra":
+        data["unknown"] = "value"
+    elif mutation == "missing-field":
+        del data["torch"]
+    elif mutation == "null":
+        data["torch_npu"] = None
+    elif mutation == "bad-patches":
+        data["patches"] = {}
+    elif mutation in {"valid-patch", "bad-patch-path", "bad-checksum", "duplicate-patch", "unsorted-patches"}:
+        patch = {"file": "llvm_patch_release.patch", "sha256": "c" * 64}
+        data["patches"] = [patch]
+        if mutation == "bad-patch-path":
+            patch["file"] = "../llvm_patch_escape.patch"
+        elif mutation == "bad-checksum":
+            patch["sha256"] = "invalid"
+        elif mutation == "duplicate-patch":
+            data["patches"].append(patch.copy())
+        elif mutation == "unsorted-patches":
+            data["patches"].append({**patch, "file": "llvm_patch_first.patch"})
     if mutation != "missing":
-        (metadata / "release-image-info.json").write_text(json.dumps(data))
+        contents = json.dumps(data)
+        if mutation == "invalid-json":
+            contents = "{bad"
+        elif mutation == "multiple":
+            contents += "\n" + contents
+        elif mutation == "empty":
+            contents = ""
+        (metadata / "release-image-info.json").write_text(contents)
     output = tmp_path / "output"
-    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
-                            env={**os.environ, "GITHUB_OUTPUT": str(output)}, capture_output=True, text=True)
-    if mutation in {"valid", "changed-release", "post-release"}:
+    script_path = tmp_path / "resolve.sh"
+    script_path.write_text(script, encoding="utf-8", newline="\n")
+    result = subprocess.run([bash, "-e", "-o", "pipefail", script_path.as_posix()], cwd=tmp_path,
+                            env={**os.environ, "GITHUB_OUTPUT":
+                                 output.as_posix()}, capture_output=True, text=True, timeout=10)
+    if mutation in {"valid", "valid-patch", "changed-release", "post-release"}:
         assert result.returncode == 0, result.stderr
         image = json.loads(output.read_text().removeprefix("image="))
         assert image["triton_version"] == data["triton_version"]

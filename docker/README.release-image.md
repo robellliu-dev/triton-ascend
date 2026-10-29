@@ -11,8 +11,10 @@ were extracted from that commit. Updating main's LLVM must not rewrite this
 release snapshot. Changing the selected release requires reviewing all fields
 together. Source metadata does not authenticate the downloaded wheel binary.
 
-The release workflow resolves these inputs once for the build and manifest
-jobs. The Dockerfile requires those resolved version arguments and rejects a
+The release workflow validates and resolves these inputs once with jq for the
+build and manifest jobs. The Dockerfile uses its already installed Python to
+check arguments and verify downloaded patches, without another parser dependency.
+It requires those resolved version arguments and rejects a
 partial override that differs from the snapshot. It downloads LLVM patches from
 the immutable release source, verifies their SHA-256 and applies them before
 building LLVM. It has no independent LLVM_COMMIT argument.

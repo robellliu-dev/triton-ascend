@@ -33,45 +33,29 @@ jobs:
       image: ${{ steps.image.outputs.image }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
       - name: Resolve release image inputs
         id: image
-        shell: python
+        shell: bash
         run: |
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          info = json.loads(Path("cmake/release-image-info.json").read_text())
-          fields = {"schema_version", "triton_version", "source_hash", "llvm_hash", "patches", "cann", "python_version", "torch", "torch_npu"}
-          if set(info) != fields or type(info["schema_version"]) is not int or info["schema_version"] != 1:
-              raise SystemExit("Invalid release image schema")
-          for key in ("source_hash", "llvm_hash"):
-              if not isinstance(info[key], str) or re.fullmatch(r"[0-9a-f]{40}", info[key]) is None:
-                  raise SystemExit(f"{key} must be an immutable full SHA")
-          for key, pattern in (("triton_version", r"[0-9]+\.[0-9]+\.[0-9]+(?:\.post[0-9]+)?"),
-                               ("python_version", r"[0-9]+\.[0-9]+\.[0-9]+")):
-              if not isinstance(info[key], str) or re.fullmatch(pattern, info[key]) is None:
-                  raise SystemExit(f"Invalid {key}")
-          if not isinstance(info["patches"], list):
-              raise SystemExit("Invalid release patch manifest")
-          for patch in info["patches"]:
-              if (not isinstance(patch, dict) or set(patch) != {"file", "sha256"}
-                  or not isinstance(patch["file"], str) or re.fullmatch(r"llvm_patch_[A-Za-z0-9_.-]+\.patch", patch["file"]) is None
-                  or not isinstance(patch["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", patch["sha256"]) is None):
-                  raise SystemExit("Invalid release patch entry")
-          names = [patch["file"] for patch in info["patches"]]
-          if names != sorted(set(names)):
-              raise SystemExit("Release patches must be unique and sorted")
-          for key in ("cann", "torch", "torch_npu"):
-              if not isinstance(info[key], str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.post[0-9]+)?", info[key]) is None:
-                  raise SystemExit(f"Invalid release {key}")
-          image = dict(info, python_series=".".join(info["python_version"].split(".")[:2]))
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("image=" + json.dumps(image, separators=(",", ":")) + "\n")
+          image=$(jq -cse '
+            def matches($pattern): type == "string" and test("\\A(" + $pattern + ")\\z");
+            select(length == 1) | .[0] |
+            select(.schema_version == 1 and
+              keys == (["schema_version", "triton_version", "source_hash", "llvm_hash", "patches",
+                        "cann", "python_version", "torch", "torch_npu"] | sort)) |
+            select(all(.source_hash, .llvm_hash; matches("[0-9a-f]{40}"))) |
+            select(all(.triton_version, .cann, .torch, .torch_npu;
+              matches("[0-9]+\\.[0-9]+\\.[0-9]+(\\.post[0-9]+)?"))) |
+            select(.python_version | matches("[0-9]+\\.[0-9]+\\.[0-9]+")) |
+            select(.patches | type == "array") |
+            select(all(.patches[];
+              keys == ["file", "sha256"] and
+              (.file | matches("llvm_patch_[A-Za-z0-9_.-]+\\.patch")) and
+              (.sha256 | matches("[0-9a-f]{64}")))) |
+            select((.patches | map(.file)) == (.patches | map(.file) | sort | unique)) |
+            . + {python_series: (.python_version | split(".") | .[:2] | join("."))}
+          ' cmake/release-image-info.json)
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: deps
